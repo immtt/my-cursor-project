@@ -3,6 +3,7 @@ import tempfile
 import time
 import uuid
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -24,7 +25,7 @@ router = APIRouter()
 async def import_data(
     dataset_type: str,
     file: UploadFile = File(...),
-    x_operator: str | None = Header(default="system"),
+    x_operator: Optional[str] = Header(default="system"),
     db: Session = Depends(get_db),
 ):
     if dataset_type not in {"system", "manual"}:
@@ -41,7 +42,7 @@ async def import_data(
 
 
 @router.post("/compare/run")
-def trigger_compare(req: CompareRequest, x_operator: str | None = Header(default="system"), db: Session = Depends(get_db)):
+def trigger_compare(req: CompareRequest, x_operator: Optional[str] = Header(default="system"), db: Session = Depends(get_db)):
     start = time.time()
     run_batch_id = uuid.uuid4().hex[:16]
     calc_result = backfill_manual_routes(db, req.route_date)
@@ -66,7 +67,7 @@ def get_overview(route_date: date = Query(...), db: Session = Depends(get_db)):
 
 
 @router.get("/compare/results")
-def get_results(route_date: date = Query(...), match_status: str | None = Query(None), db: Session = Depends(get_db)):
+def get_results(route_date: date = Query(...), match_status: Optional[str] = Query(None), db: Session = Depends(get_db)):
     return fetch_results(db, route_date, match_status)
 
 

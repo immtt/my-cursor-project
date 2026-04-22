@@ -1,11 +1,12 @@
 import csv
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
 
 
-def fetch_results(db: Session, route_date, match_status: str | None = None):
+def fetch_results(db: Session, route_date, match_status: Optional[str] = None):
     q = db.query(CompareResult).filter(CompareResult.route_date == route_date)
     if match_status:
         q = q.filter(CompareResult.match_status == match_status)
