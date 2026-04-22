@@ -59,22 +59,26 @@ body {
   top: 0;
   align-self: flex-start;
   height: 100vh;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  padding: 0 0 20px;
+  padding: 0;
   box-shadow: 6px 0 32px rgba(0, 0, 0, 0.18);
   z-index: 20;
 }
 
+/* 顶栏固定：系统名不随菜单滚动 */
 .sidebar__brand {
+  flex-shrink: 0;
   padding: 22px 20px 20px;
-  margin: 0 0 4px;
+  margin: 0;
   border-bottom: 1px solid var(--sidebar-border);
+  background: linear-gradient(180deg, #1e2a3d 0%, #1a2332 100%);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  z-index: 2;
 }
 
 .sidebar__brand-title {
@@ -88,8 +92,10 @@ body {
 .sidebar-nav-wrap {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding-top: 4px;
+  padding: 8px 0 20px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .nav-group {
