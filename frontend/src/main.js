@@ -4,11 +4,15 @@ const API_BASE = `${API_ORIGIN}/api`;
 
 function backendUnreachableHtml(err) {
   const detail = err && err.message ? `（${err.message}）` : "";
+  const isFetchFail = /failed to fetch|networkerror|load failed/i.test(detail);
+  const corsHint = isFetchFail
+    ? `<br/><small>若新标签能打开 <a href="${API_ORIGIN}/health" target="_blank" rel="noopener">/health</a> 但页面仍报错，多半是<strong>不要用「文件」方式双击打开 HTML</strong>，请用 <code>http://127.0.0.1:5173</code> 访问前端；并确保地址栏是 <code>127.0.0.1</code> 或 <code>localhost</code>，不要用局域网 IP 打开页面却访问本机 127.0.0.1 接口。</small>`
+    : "";
   return `<div class="alert alert--error">
     <strong>无法连接后端</strong>${detail}<br/>
     1）在项目根目录执行：<code>./scripts/start-dev.sh</code>（前后端一起启动）<br/>
     2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 127.0.0.1 --port 8080</code><br/>
-    3）浏览器打开自检：<a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a> 应返回 <code>{"status":"ok"}</code><br/>
+    3）浏览器打开自检：<a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a> 应返回 <code>{"status":"ok"}</code>${corsHint}<br/>
     <small>默认接口端口为 8080（避免与 Mac 隔空播放占用 8000）。若改端口，请在 <code>index.html</code> 中于 main.js 之前设置 <code>window.__API_ORIGIN__</code>。</small>
   </div>`;
 }
