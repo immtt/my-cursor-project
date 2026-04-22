@@ -1,9 +1,10 @@
 import re
 import uuid
-from datetime import datetime
-from typing import Dict
+from datetime import date, datetime
+from io import BytesIO
+from typing import Dict, Tuple
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
 from app.models.entities import ImportAuditLog, ManualRoute, SysSuggest
@@ -31,6 +32,70 @@ def _normalize_header_label(raw: str) -> str:
     s = raw.strip()
     s = re.sub(r"\s*[\(（][^)）]+[\)）]\s*$", "", s).strip()
     return s
+
+
+def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
+    """生成与导入规则一致的标准 Excel 模板（含表头 + 一行示例）。"""
+    if dataset_type not in {"system", "manual"}:
+        raise ValueError("dataset_type must be system or manual")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "导入数据"
+    if dataset_type == "system":
+        filename = "智能排线_导入模板_系统建议.xlsx"
+        ws.append(
+            [
+                "排线日期",
+                "运单号",
+                "归属线路",
+                "始发仓库",
+                "拼载门店",
+                "配送体积",
+                "装载率",
+                "预计公里数",
+                "预计时效",
+            ]
+        )
+        ws.append(
+            [
+                date(2026, 4, 21),
+                "示例运单001",
+                "示例线路",
+                "示例仓库",
+                "示例门店甲,示例门店乙",
+                10.5,
+                75,
+                45.0,
+                90,
+            ]
+        )
+    else:
+        filename = "智能排线_导入模板_手动排线.xlsx"
+        ws.append(
+            [
+                "排线日期",
+                "运单号",
+                "归属线路",
+                "始发仓库",
+                "拼载门店",
+                "配送体积",
+                "装载率",
+            ]
+        )
+        ws.append(
+            [
+                date(2026, 4, 21),
+                "示例运单001",
+                "示例线路",
+                "示例仓库",
+                "示例门店甲,示例门店乙",
+                10.5,
+                75,
+            ]
+        )
+    bio = BytesIO()
+    wb.save(bio)
+    return bio.getvalue(), filename
 
 
 def _build_header_map(sheet) -> Dict[str, int]:

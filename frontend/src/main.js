@@ -154,10 +154,34 @@ function renderImport() {
         <span class="field-label">Excel 文件</span>
         <input id="fileInput" type="file" accept=".xlsx,.xls" />
       </div>
+      <button type="button" class="btn btn--secondary" id="exportTemplateBtn">导出Excel</button>
       <button type="button" class="btn btn--primary" id="importBtn">开始导入</button>
     </div>
     <div id="importRespWrap"></div>
   `;
+  document.getElementById("exportTemplateBtn").onclick = async () => {
+    const wrap = document.getElementById("importRespWrap");
+    const datasetType = document.getElementById("datasetType").value;
+    const url = `${API_BASE}/import/template?dataset_type=${encodeURIComponent(datasetType)}`;
+    const filename =
+      datasetType === "system" ? "智能排线_导入模板_系统建议.xlsx" : "智能排线_导入模板_手动排线.xlsx";
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } catch (err) {
+      wrap.innerHTML = backendUnreachableHtml(err);
+    }
+  };
   document.getElementById("importBtn").onclick = async () => {
     const wrap = document.getElementById("importRespWrap");
     const datasetType = document.getElementById("datasetType").value;

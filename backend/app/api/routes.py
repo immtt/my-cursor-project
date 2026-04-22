@@ -4,9 +4,10 @@ import time
 import uuid
 from datetime import date
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -14,11 +15,28 @@ from app.models.entities import CompareRunLog
 from app.schemas.requests import CompareRequest
 from app.services.compare_service import overview, run_compare
 from app.services.gaode_service import backfill_manual_routes
-from app.services.import_service import import_excel
+from app.services.import_service import build_import_template_xlsx, import_excel
 from app.services.result_service import export_results_csv, fetch_results
 from app.services.route_map_service import build_route_map_payload
 
 router = APIRouter()
+
+
+@router.get("/import/template")
+def download_import_template(dataset_type: str = Query(..., description="system | manual")):
+    if dataset_type not in {"system", "manual"}:
+        raise HTTPException(status_code=400, detail="dataset_type must be system or manual")
+    try:
+        content, filename = build_import_template_xlsx(dataset_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    ascii_name = "smart_route_import_system.xlsx" if dataset_type == "system" else "smart_route_import_manual.xlsx"
+    disp = f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disp},
+    )
 
 
 @router.post("/import/{dataset_type}")
