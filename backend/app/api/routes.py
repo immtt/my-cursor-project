@@ -5,6 +5,7 @@ import uuid
 from datetime import date
 from typing import Optional
 from urllib.parse import quote
+from zipfile import BadZipFile
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -55,7 +56,12 @@ async def import_data(
         tmp.write(content)
         tmp_path = tmp.name
     try:
-        result = import_excel(db, dataset_type, tmp_path, operator=x_operator or "system")
+        try:
+            result = import_excel(db, dataset_type, tmp_path, operator=x_operator or "system")
+        except BadZipFile as e:
+            raise HTTPException(status_code=400, detail="请上传有效的 .xlsx 文件（非 zip/xlsx 格式无法解析）") from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     finally:
         os.remove(tmp_path)
     return result
