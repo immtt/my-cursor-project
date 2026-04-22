@@ -18,6 +18,18 @@ trap cleanup EXIT INT TERM
 uvicorn app.main:app --host 127.0.0.1 --port 8000 &
 BACK_PID=$!
 
+sleep 2
+if curl -sf "http://127.0.0.1:8000/health" >/dev/null; then
+  echo "后端健康检查: OK（http://127.0.0.1:8000/health）"
+else
+  echo ""
+  echo "【警告】无法访问 http://127.0.0.1:8000/health ，前端导入/比对将失败。"
+  echo "  · 查看上方 uvicorn 是否报错；"
+  echo "  · Mac 常见：端口 8000 被「隔空播放接收器」占用 → 系统设置 → 通用 → 隔空播放与接力 → 关闭；"
+  echo "  · 或结束占用进程后重新运行本脚本。"
+  echo ""
+fi
+
 cd "$ROOT/frontend"
 python3 -m http.server 5173 --bind 127.0.0.1 &
 FRONT_PID=$!

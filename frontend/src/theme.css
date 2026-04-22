@@ -162,6 +162,45 @@ body {
   background: var(--bg);
 }
 
+.api-status-banner {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.api-status-banner--checking {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.api-status-banner--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.api-status-banner--error code {
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.api-status-banner--error a {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.api-status-banner__hint {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #7f1d1d;
+  opacity: 0.95;
+}
+
 .workspace-header {
   margin-bottom: 16px;
 }

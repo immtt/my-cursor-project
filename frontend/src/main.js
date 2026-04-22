@@ -1,5 +1,42 @@
 const app = document.getElementById("app");
-const API_BASE = "http://127.0.0.1:8000/api";
+const API_ORIGIN = window.__API_ORIGIN__ || "http://127.0.0.1:8000";
+const API_BASE = `${API_ORIGIN}/api`;
+
+function backendUnreachableHtml(err) {
+  const detail = err && err.message ? `（${err.message}）` : "";
+  return `<div class="alert alert--error">
+    <strong>无法连接后端</strong>${detail}<br/>
+    1）在项目根目录执行：<code>./scripts/start-dev.sh</code>（前后端一起启动）<br/>
+    2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 127.0.0.1 --port 8000</code><br/>
+    3）浏览器打开自检：<a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a> 应返回 <code>{"status":"ok"}</code><br/>
+    <small>Mac 常见：端口 8000 被「隔空播放接收器」占用 → 系统设置中关闭，或把后端改到其它端口并设置 <code>window.__API_ORIGIN__</code>。</small>
+  </div>`;
+}
+
+async function refreshApiStatusBanner() {
+  const el = document.getElementById("api-status-banner");
+  if (!el) return;
+  el.removeAttribute("hidden");
+  el.className = "api-status-banner api-status-banner--checking";
+  el.textContent = "正在检测后端…";
+  try {
+    const r = await fetch(`${API_ORIGIN}/health`, { method: "GET", cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    el.setAttribute("hidden", "");
+    el.innerHTML = "";
+    el.className = "api-status-banner";
+  } catch {
+    el.removeAttribute("hidden");
+    el.className = "api-status-banner api-status-banner--error";
+    el.innerHTML = `<strong>未连接到后端</strong> <code>${API_ORIGIN}</code>
+      · <a href="#" class="api-retry-check">重试检测</a>
+      <div class="api-status-banner__hint">请先运行 <code>./scripts/start-dev.sh</code>。若已运行仍失败，检查 8000 端口是否被占用（Mac「隔空播放」）。</div>`;
+    el.querySelector(".api-retry-check")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      refreshApiStatusBanner();
+    });
+  }
+}
 
 function routeMapIdFromHash() {
   const h = window.location.hash || "";
@@ -97,6 +134,7 @@ function route() {
     setWorkspaceTitle("数据导入");
   }
   syncNav();
+  refreshApiStatusBanner();
 }
 
 function renderImport() {
@@ -135,8 +173,8 @@ function renderImport() {
       const resp = await fetch(`${API_BASE}/import/${datasetType}`, { method: "POST", body: formData });
       const data = await resp.json();
       wrap.innerHTML = `<div class="code-block"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
-    } catch {
-      wrap.innerHTML = `<div class="alert alert--error">请求失败，请确认后端已启动（${API_BASE}）。</div>`;
+    } catch (err) {
+      wrap.innerHTML = backendUnreachableHtml(err);
     }
   };
 }
@@ -182,8 +220,8 @@ function renderCompare() {
         data.failed_stores = data.calc.failures;
       }
       wrap.innerHTML = `<div class="code-block"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
-    } catch {
-      wrap.innerHTML = `<div class="alert alert--error">请求失败，请确认后端已启动。</div>`;
+    } catch (err) {
+      wrap.innerHTML = backendUnreachableHtml(err);
     }
   };
 }
@@ -270,8 +308,8 @@ function renderResult() {
         .join("");
       emptyEl.style.display = rows.length ? "none" : "block";
       if (!rows.length) emptyEl.textContent = "该条件下没有比对记录，可先执行「数据比对」。";
-    } catch {
-      overviewArea.innerHTML = `<div class="alert alert--error">加载失败，请确认后端已启动。</div>`;
+    } catch (err) {
+      overviewArea.innerHTML = backendUnreachableHtml(err);
       tbody.innerHTML = "";
     }
   };
@@ -320,8 +358,8 @@ function renderRouteMap() {
         return;
       }
       data = await resp.json();
-    } catch {
-      errEl.innerHTML = `<div class="alert alert--error">无法连接后端，请确认服务已启动。</div>`;
+    } catch (err) {
+      errEl.innerHTML = backendUnreachableHtml(err);
       return;
     }
 
