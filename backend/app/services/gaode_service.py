@@ -102,6 +102,36 @@ def _amap_place_text_lnglat(keywords: str) -> Optional[Tuple[float, float]]:
     return float(a), float(b)
 
 
+def sync_resolved_lnglat_to_cache_tables(
+    db: Session, label: str, kind: str, lng: float, lat: float
+) -> None:
+    """
+    补算后把本次实际采用的经纬度写回已存在的冗余表，保持与当次补算结果一致。
+
+    - 门店：若 `store_coordinate` 有该 `store_name`，更新经纬度。
+    - 仓库/门店：若 `address_cache` 有该 `address_name`，更新经纬度（不自动新建行，新建仍由 resolve 流程负责）。
+    """
+    name = (label or "").strip()
+    if not name:
+        return
+    lng, lat = float(lng), float(lat)
+    if kind == "store":
+        sc = (
+            db.query(StoreCoordinate)
+            .filter(StoreCoordinate.store_name == name)
+            .first()
+        )
+        if sc:
+            sc.longitude, sc.latitude = lng, lat
+    ac = (
+        db.query(AddressCache)
+        .filter(AddressCache.address_name == name)
+        .first()
+    )
+    if ac:
+        ac.longitude, ac.latitude = lng, lat
+
+
 def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[float, float]:
     """手动补算用：门店表精确/相似名 → 缓存 → 高德（地理编码/关键词）→ 模拟。"""
     label = (label or "").strip()
@@ -203,6 +233,37 @@ def _amap_driving_leg(
     return dist_m, dur_s, pts
 
 
+def driving_polyline_chain(coords: List[Tuple[float, float]]) -> List[List[float]]:
+    """相邻点依次驾车规划并拼接；折线来自高德 steps 中的道路形状点。"""
+    if len(coords) < 2:
+        return []
+    merged: List[List[float]] = []
+    for i in range(len(coords) - 1):
+        _dm, _ds, leg_pts = _amap_driving_leg(coords[i], coords[i + 1])
+        if leg_pts:
+            if merged and merged[-1] == leg_pts[0]:
+                merged.extend(leg_pts[1:])
+            else:
+                merged.extend(leg_pts)
+        else:
+            a, b = coords[i], coords[i + 1]
+            merged.append([round(float(a[0]), 6), round(float(a[1]), 6)])
+            merged.append([round(float(b[0]), 6), round(float(b[1]), 6)])
+    return merged
+
+
+def map_path_from_markers(markers: List[dict]) -> Optional[List[List[float]]]:
+    """地图页用：按 marker 顺序走实际路网。未启用高德或请求失败时返回 None。"""
+    if not amap_rest_enabled() or len(markers) < 2:
+        return None
+    try:
+        coords = [(float(m["lng"]), float(m["lat"])) for m in markers]
+        pts = driving_polyline_chain(coords)
+        return pts if len(pts) >= 2 else None
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        return None
+
+
 def estimate_manual_route_amap(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[float, int, List[List[float]], List[str]]:
@@ -251,15 +312,30 @@ def estimate_bundle_for_manual(
 
 
 def get_or_create_coord(db: Session, address_name: str, address_type: str):
+    """地图/模拟路径取点：门店与补算一致，走门店主数据表精确/相似名 + 缓存 + 高德 + 模拟；仓库不走门店相似匹配。"""
     if not address_name:
         raise ValueError("address is empty")
     if address_type == "store":
-        sc = db.query(StoreCoordinate).filter(StoreCoordinate.store_name == address_name).first()
-        if sc:
-            return sc.longitude, sc.latitude
+        return resolve_lnglat_for_manual(db, address_name, kind="store")
     cached = db.query(AddressCache).filter(AddressCache.address_name == address_name).first()
     if cached:
         return cached.longitude, cached.latitude
+    if amap_rest_enabled():
+        try:
+            ll = _amap_geocode_lnglat(address_name)
+            if ll:
+                db.add(
+                    AddressCache(
+                        address_name=address_name,
+                        address_type="warehouse",
+                        longitude=ll[0],
+                        latitude=ll[1],
+                    )
+                )
+                db.commit()
+                return ll
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            db.rollback()
     lng, lat = _mock_geocode(address_name)
     db.add(AddressCache(address_name=address_name, address_type=address_type, longitude=lng, latitude=lat))
     db.commit()
@@ -350,6 +426,18 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
             row.route_polyline = encode_route_polyline(path)
             row.delivery_store_order = json.dumps(order, ensure_ascii=False)
             row.calc_status = 1
+            wh = (row.warehouse_name or "").strip()
+            if wh:
+                wlng, wlat = resolve_lnglat_for_manual(db, wh, kind="warehouse")
+                sync_resolved_lnglat_to_cache_tables(db, wh, "warehouse", wlng, wlat)
+            seen_store = set()
+            for sn in stores:
+                s0 = (sn or "").strip()
+                if not s0 or s0 in seen_store:
+                    continue
+                seen_store.add(s0)
+                slng, slat = resolve_lnglat_for_manual(db, s0, kind="store")
+                sync_resolved_lnglat_to_cache_tables(db, s0, "store", slng, slat)
             updated += 1
         else:
             row.calc_status = 2
@@ -371,33 +459,75 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
 
 
 def backfill_manual_routes(db: Session, route_date):
+    """该日所有有效手动行均参与补算（含已算成功），结果覆盖写入。"""
     rows = (
         db.query(ManualRoute)
-        .filter(ManualRoute.route_date == route_date, ManualRoute.calc_status.in_([0, 2]), ManualRoute.is_active == 1)
+        .filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1)
         .all()
     )
     return _run_manual_backfill_for_rows(db, rows)
 
 
 def backfill_manual_routes_by_batch(db: Session, batch_id: str) -> dict:
-    """对指定导入批次下待补算的手动排线行做里程/时效估算（与比对前补算逻辑一致）。"""
+    """指定导入批次下有效手动行全部重算并覆盖（含此前已成功的里程/时效/顺序）。"""
     bid = str(batch_id).strip() if batch_id else ""
     if not bid:
         raise ValueError("batch_id required")
     rows = (
         db.query(ManualRoute)
-        .filter(ManualRoute.batch_id == bid, ManualRoute.calc_status.in_([0, 2]), ManualRoute.is_active == 1)
+        .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
         .all()
     )
     return _run_manual_backfill_for_rows(db, rows)
 
 
-def build_markers(warehouse: str, stores_csv: str, db: Session) -> List[dict]:
+def backfill_manual_routes_by_date_window(db: Session, route_date_from, route_date_to) -> dict:
+    """排线日期闭区间内有效手动行全部重算并覆盖。"""
+    rows = (
+        db.query(ManualRoute)
+        .filter(
+            ManualRoute.is_active == 1,
+            ManualRoute.route_date >= route_date_from,
+            ManualRoute.route_date <= route_date_to,
+        )
+        .all()
+    )
+    return _run_manual_backfill_for_rows(db, rows)
+
+
+def manual_store_visit_sequence(stores_csv: str, delivery_store_order_json: Optional[str]) -> List[str]:
+    """拼载门店 CSV 顺序与落库配送顺序合并：优先采用 JSON 中的顺序，缺漏的店按 CSV 补全。"""
+    stores = [s.strip() for s in (stores_csv or "").split(",") if s.strip()]
+    if not delivery_store_order_json:
+        return stores
+    try:
+        visit = json.loads(delivery_store_order_json)
+    except (json.JSONDecodeError, TypeError):
+        return stores
+    if not isinstance(visit, list):
+        return stores
+    visit_strs = [str(x).strip() for x in visit if str(x).strip()]
+    seen = set(stores)
+    ordered = [x for x in visit_strs if x in seen]
+    for s in stores:
+        if s not in ordered:
+            ordered.append(s)
+    return ordered
+
+
+def build_markers(
+    warehouse: str,
+    stores_csv: str,
+    db: Session,
+    *,
+    store_visit_order: Optional[List[str]] = None,
+) -> List[dict]:
     markers: List[dict] = []
     lng, lat = get_or_create_coord(db, warehouse, "warehouse")
     markers.append({"seq": 0, "name": warehouse, "lng": lng, "lat": lat, "kind": "warehouse"})
     stores = [s.strip() for s in stores_csv.split(",") if s.strip()]
-    for i, name in enumerate(stores, start=1):
+    order = store_visit_order if store_visit_order is not None else stores
+    for i, name in enumerate(order, start=1):
         slng, slat = get_or_create_coord(db, name, "store")
         markers.append({"seq": i, "name": name, "lng": slng, "lat": slat, "kind": "store"})
     return markers

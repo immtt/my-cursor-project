@@ -31,6 +31,16 @@ const API_BASE = `${API_ORIGIN}/api`;
 
 const IMPORT_LAST_BATCH_KEY = "smart_route_import_last_batch";
 const IMPORT_LIST_VIEW_TYPE_KEY = "smart_route_import_list_view_type";
+const IMPORT_LIST_RANGE_FROM_KEY = "smart_route_data_list_from";
+const IMPORT_LIST_RANGE_TO_KEY = "smart_route_data_list_to";
+
+function defaultDateRange() {
+  const to = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const from = new Date(to.getFullYear(), to.getMonth(), to.getDate() - 30);
+  return { from: fmt(from), to: fmt(to) };
+}
 
 function getLastBatchIds() {
   try {
@@ -81,6 +91,50 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+/** 差异分析行项目：与后端 dataset_type 一致。 */
+function diffDatasetTypeLabel(t) {
+  if (t === "system") return "系统建议";
+  if (t === "manual") return "手工排线";
+  return "";
+}
+
+function diffDatasetTypeTagSpan(datasetType) {
+  const label = diffDatasetTypeLabel(datasetType);
+  if (!label) return "";
+  const cls = datasetType === "system" ? "waybill-tag waybill-tag--system" : "waybill-tag waybill-tag--manual";
+  return `<span class="${cls}">${escapeHtml(label)}</span> · `;
+}
+
+/** 线路差异表：系统与手工运单同列，用标签区分。 */
+function formatCompareWaybillCell(sys, manual) {
+  const s =
+    sys != null && String(sys).trim() !== "" ? escapeHtml(String(sys)) : "—";
+  const m =
+    manual != null && String(manual).trim() !== ""
+      ? escapeHtml(String(manual))
+      : "—";
+  return `<td class="cell-waybills">
+    <div class="waybill-line"><span class="waybill-tag waybill-tag--system">系统</span><span class="waybill-no">${s}</span></div>
+    <div class="waybill-line"><span class="waybill-tag waybill-tag--manual">手工</span><span class="waybill-no">${m}</span></div>
+  </td>`;
+}
+
+/** 线路差异表：不同门店分侧展示，系统 / 手工标签与运单列一致。 */
+function formatDiffStoresCell(onlySystem, onlyManual) {
+  const s =
+    onlySystem != null && String(onlySystem).trim() !== ""
+      ? escapeHtml(String(onlySystem))
+      : "—";
+  const m =
+    onlyManual != null && String(onlyManual).trim() !== ""
+      ? escapeHtml(String(onlyManual))
+      : "—";
+  return `<td class="cell-stores cell-diff-stores">
+    <div class="waybill-line"><span class="waybill-tag waybill-tag--system">系统</span><span class="waybill-no">${s}</span></div>
+    <div class="waybill-line"><span class="waybill-tag waybill-tag--manual">手工</span><span class="waybill-no">${m}</span></div>
+  </td>`;
+}
+
 const IMPORT_LIST_TABLE_HEADERS = [
   "ID",
   "排线日期",
@@ -91,8 +145,8 @@ const IMPORT_LIST_TABLE_HEADERS = [
   "车型",
   "体积",
   "装载率",
-  "预估里程",
-  "预估时效",
+  "预估里程(km)",
+  "预估时效(分钟)",
 ];
 
 function renderImportListTableRowsOnly(rows) {
@@ -132,35 +186,42 @@ function buildImportListPanelHtml({
   page,
   pageSize,
   payload,
-  queryMode = "batch",
   dateFrom = "",
   dateTo = "",
+  selectedWarehouse = "",
+  warehouseOptions = [],
 }) {
-  const mode = queryMode === "range" ? "range" : "batch";
   const safeFrom = dateFrom || "";
   const safeTo = dateTo || "";
+  const wh = selectedWarehouse || "";
+  const whOpts = Array.isArray(warehouseOptions) ? warehouseOptions : [];
+  const whSelectOpts = [
+    `<option value="" ${wh === "" ? "selected" : ""}>全部</option>`,
+    ...whOpts.map(
+      (w) =>
+        `<option value="${escapeHtml(w)}" ${wh === w ? "selected" : ""}>${escapeHtml(w)}</option>`,
+    ),
+  ].join("");
   const total = Number(payload.total) || 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
   const label = datasetTypeLabel(selectedDatasetType);
   const items = Array.isArray(payload.items) ? payload.items : [];
   const tableInner =
     total === 0
-      ? mode === "range"
+      ? safeFrom && safeTo
         ? `<p class="empty-hint">该排线日期范围内无有效数据。</p>`
-        : `<p class="empty-hint">本批无明细行。</p>`
+        : `<p class="empty-hint">请选择排线日期起、止后点击「查询」。</p>`
       : items.length === 0
         ? `<p class="empty-hint">本页无数据。</p>`
         : renderImportListTableRowsOnly(items);
   const rangeSummary =
-    mode === "range" && safeFrom && safeTo
-      ? ` · 排线 ${escapeHtml(safeFrom)}～${escapeHtml(safeTo)}`
-      : mode === "batch"
-        ? " · 本批"
-        : "";
-  return `<div id="importListPanel" class="import-list-panel" data-query-mode="${mode}" data-date-from="${escapeHtml(
+    safeFrom && safeTo ? ` · 排线 ${escapeHtml(safeFrom)}～${escapeHtml(safeTo)}` : "";
+  return `<div id="importListPanel" class="import-list-panel" data-query-mode="range" data-date-from="${escapeHtml(
     safeFrom
-  )}" data-date-to="${escapeHtml(safeTo)}" data-page="${page}" data-total="${total}">
-      <p class="page-head" style="margin-top:1rem;margin-bottom:0.5rem"><strong>导入明细列表</strong><br/><small class="empty-hint" style="font-size:0.9em">仅展示当前有效数据（覆盖导入后旧批次自动失效）。</small></p>
+  )}" data-date-to="${escapeHtml(safeTo)}" data-warehouse="${escapeHtml(
+    wh
+  )}" data-page="${page}" data-total="${total}">
+      <p class="page-head" style="margin-top:1rem;margin-bottom:0.5rem"><strong>数据明细</strong><br/><small class="empty-hint" style="font-size:0.9em">按排线日期查看当前有效数据，与是否本次导入无关；导入与查阅相互独立。</small></p>
       <div class="toolbar import-list-toolbar">
         <div class="field">
           <span class="field-label">列表数据类型</span>
@@ -176,6 +237,10 @@ function buildImportListPanelHtml({
         <div class="field">
           <span class="field-label">排线日期止</span>
           <input type="date" id="importListDateTo" value="${escapeHtml(safeTo)}" />
+        </div>
+        <div class="field">
+          <span class="field-label">仓库</span>
+          <select id="importListWarehouse">${whSelectOpts}</select>
         </div>
         <button type="button" class="btn btn--primary" id="importListQueryBtn">查询</button>
         <button type="button" class="btn btn--secondary" id="importListManualCalcBtn" ${
@@ -211,7 +276,14 @@ async function fetchImportBatchPage(datasetType, batchId, page, pageSize) {
   return r.json();
 }
 
-async function fetchImportActivePage(datasetType, routeDateFrom, routeDateTo, page, pageSize) {
+async function fetchImportActivePage(
+  datasetType,
+  routeDateFrom,
+  routeDateTo,
+  page,
+  pageSize,
+  warehouseName = "",
+) {
   const q = new URLSearchParams({
     dataset_type: datasetType,
     route_date_from: routeDateFrom,
@@ -219,6 +291,8 @@ async function fetchImportActivePage(datasetType, routeDateFrom, routeDateTo, pa
     page: String(page),
     page_size: String(pageSize),
   });
+  const wh = (warehouseName || "").trim();
+  if (wh) q.set("warehouse_name", wh);
   const r = await fetch(`${API_BASE}/import-active?${q}`);
   if (!r.ok) {
     const t = await r.text();
@@ -233,18 +307,21 @@ function updateImportListPanelDom(wrap, params) {
     page,
     pageSize,
     payload,
-    queryMode = "batch",
     dateFrom = "",
     dateTo = "",
+    selectedWarehouse = "",
+    warehouseOptions,
   } = params;
+  const opts = warehouseOptions ?? payload.warehouse_options ?? [];
   const panelHtml = buildImportListPanelHtml({
     selectedDatasetType,
     page,
     pageSize,
     payload,
-    queryMode,
     dateFrom,
     dateTo,
+    selectedWarehouse,
+    warehouseOptions: opts,
   });
   const panel = wrap.querySelector("#importListPanel");
   if (panel) {
@@ -262,100 +339,49 @@ async function syncImportListPanel(wrap, options = {}) {
     options.pageSize ?? (Number(wrap.querySelector("#importListPageSize")?.value) || 20);
   const page = options.page ?? (panelEl ? Number(panelEl.dataset.page) || 1 : 1);
 
-  let queryMode = options.queryMode;
-  if (queryMode == null) {
-    queryMode = panelEl?.getAttribute("data-query-mode") === "range" ? "range" : "batch";
-  }
   let dateFrom = options.dateFrom;
   let dateTo = options.dateTo;
   if (dateFrom == null) dateFrom = panelEl?.dataset.dateFrom ?? "";
   if (dateTo == null) dateTo = panelEl?.dataset.dateTo ?? "";
-
-  const ids = getLastBatchIds();
-  const batchId = ids[datasetType];
-
-  if (queryMode === "range") {
-    if (!dateFrom || !dateTo) {
-      updateImportListPanelDom(wrap, {
-        selectedDatasetType: datasetType,
-        page: 1,
-        pageSize,
-        payload: { items: [], total: 0 },
-        queryMode: "range",
-        dateFrom,
-        dateTo,
-      });
-      const tw = wrap.querySelector("#importListTableWrap");
-      if (tw) {
-        tw.innerHTML = `<div class="alert alert--muted">请选择排线日期起、止后点击「查询」。</div>`;
-      }
-      return;
-    }
-    if (dateFrom > dateTo) {
-      const tw = wrap.querySelector("#importListTableWrap");
-      if (tw) {
-        tw.innerHTML = `<div class="alert alert--error">日期起不能晚于日期止。</div>`;
-      }
-      return;
-    }
-    try {
-      const payload = await fetchImportActivePage(datasetType, dateFrom, dateTo, page, pageSize);
-      updateImportListPanelDom(wrap, {
-        selectedDatasetType: datasetType,
-        page,
-        pageSize,
-        payload,
-        queryMode: "range",
-        dateFrom,
-        dateTo,
-      });
-    } catch (err) {
-      const tw = wrap.querySelector("#importListTableWrap");
-      if (tw) tw.innerHTML = backendUnreachableHtml(err);
-    }
-    return;
+  if (!dateFrom || !dateTo) {
+    const d = defaultDateRange();
+    if (!dateFrom) dateFrom = d.from;
+    if (!dateTo) dateTo = d.to;
   }
 
-  if (!batchId) {
-    const df = panelEl?.querySelector("#importListDateFrom")?.value ?? "";
-    const dt = panelEl?.querySelector("#importListDateTo")?.value ?? "";
-    const emptyHtml = buildImportListPanelHtml({
-      selectedDatasetType: datasetType,
-      page: 1,
-      pageSize,
-      payload: { items: [], total: 0 },
-      queryMode: "batch",
-      dateFrom: df,
-      dateTo: dt,
-    });
-    const panel = wrap.querySelector("#importListPanel");
-    if (panel) {
-      const d = document.createElement("div");
-      d.innerHTML = emptyHtml.trim();
-      panel.replaceWith(d.firstElementChild);
-    } else {
-      wrap.insertAdjacentHTML("beforeend", emptyHtml);
-    }
+  let warehouseName = options.warehouseName;
+  if (warehouseName == null) {
+    const whEl = wrap.querySelector("#importListWarehouse");
+    warehouseName = whEl?.value ?? panelEl?.dataset.warehouse ?? "";
+  }
+
+  if (dateFrom > dateTo) {
     const tw = wrap.querySelector("#importListTableWrap");
-    if (tw) {
-      tw.innerHTML = `<div class="alert alert--muted">请先导入该类型数据以查看本批列表，或填写排线日期后点击「查询」按日期浏览。</div>`;
-    }
+    if (tw) tw.innerHTML = `<div class="alert alert--error">日期起不能晚于日期止。</div>`;
     return;
   }
 
   try {
-    const payload = await fetchImportBatchPage(datasetType, batchId, page, pageSize);
-    const df = panelEl?.querySelector("#importListDateFrom")?.value ?? "";
-    const dt = panelEl?.querySelector("#importListDateTo")?.value ?? "";
+    const payload = await fetchImportActivePage(
+      datasetType,
+      dateFrom,
+      dateTo,
+      page,
+      pageSize,
+      warehouseName,
+    );
     updateImportListPanelDom(wrap, {
       selectedDatasetType: datasetType,
       page,
       pageSize,
       payload,
-      queryMode: "batch",
-      dateFrom: df,
-      dateTo: dt,
+      dateFrom,
+      dateTo,
+      selectedWarehouse: warehouseName || "",
+      warehouseOptions: payload.warehouse_options,
     });
+    sessionStorage.setItem(IMPORT_LIST_RANGE_FROM_KEY, dateFrom);
+    sessionStorage.setItem(IMPORT_LIST_RANGE_TO_KEY, dateTo);
   } catch (err) {
     const tw = wrap.querySelector("#importListTableWrap");
     if (tw) tw.innerHTML = backendUnreachableHtml(err);
@@ -368,14 +394,17 @@ async function refreshImportListFromCurrentPanel(wrap) {
   const datasetType = wrap.querySelector("#importListSource")?.value || "system";
   const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
   const page = Number(panel.dataset.page) || 1;
-  const mode = panel.getAttribute("data-query-mode") === "range" ? "range" : "batch";
   const dateFrom = panel.dataset.dateFrom ?? "";
   const dateTo = panel.dataset.dateTo ?? "";
-  if (mode === "range" && dateFrom && dateTo) {
-    await syncImportListPanel(wrap, { datasetType, page, pageSize, queryMode: "range", dateFrom, dateTo });
-  } else {
-    await syncImportListPanel(wrap, { datasetType, page, pageSize, queryMode: "batch" });
-  }
+  const warehouseName = wrap.querySelector("#importListWarehouse")?.value ?? panel.dataset.warehouse ?? "";
+  await syncImportListPanel(wrap, {
+    datasetType,
+    page,
+    pageSize,
+    dateFrom,
+    dateTo,
+    warehouseName,
+  });
 }
 
 function bindImportListInteractions(wrap) {
@@ -384,50 +413,57 @@ function bindImportListInteractions(wrap) {
   wrap.addEventListener("change", (e) => {
     const t = e.target;
     const panel = wrap.querySelector("#importListPanel");
-    const mode = panel?.getAttribute("data-query-mode") === "range" ? "range" : "batch";
     const dateFrom = panel?.dataset.dateFrom ?? "";
     const dateTo = panel?.dataset.dateTo ?? "";
+    const warehouseName = wrap.querySelector("#importListWarehouse")?.value ?? panel?.dataset.warehouse ?? "";
     if (t.id === "importListSource") {
       setImportListViewType(t.value);
       const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
-      if (mode === "range" && dateFrom && dateTo) {
-        void syncImportListPanel(wrap, {
-          datasetType: t.value,
-          page: 1,
-          pageSize,
-          queryMode: "range",
-          dateFrom,
-          dateTo,
-        });
-      } else {
-        void syncImportListPanel(wrap, { datasetType: t.value, page: 1, pageSize, queryMode: "batch" });
-      }
+      void syncImportListPanel(wrap, {
+        datasetType: t.value,
+        page: 1,
+        pageSize,
+        dateFrom,
+        dateTo,
+        warehouseName,
+      });
     } else if (t.id === "importListPageSize") {
       const datasetType = wrap.querySelector("#importListSource")?.value || "system";
       const pageSize = Number(t.value) || 20;
-      if (mode === "range" && dateFrom && dateTo) {
-        void syncImportListPanel(wrap, {
-          datasetType,
-          page: 1,
-          pageSize,
-          queryMode: "range",
-          dateFrom,
-          dateTo,
-        });
-      } else {
-        void syncImportListPanel(wrap, { datasetType, page: 1, pageSize, queryMode: "batch" });
-      }
+      void syncImportListPanel(wrap, {
+        datasetType,
+        page: 1,
+        pageSize,
+        dateFrom,
+        dateTo,
+        warehouseName,
+      });
+    } else if (t.id === "importListWarehouse") {
+      const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+      const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+      void syncImportListPanel(wrap, {
+        datasetType,
+        page: 1,
+        pageSize,
+        dateFrom,
+        dateTo,
+        warehouseName: t.value ?? "",
+      });
     }
   });
   wrap.addEventListener("click", (e) => {
     const calcBtn = e.target.closest("#importListManualCalcBtn");
     if (calcBtn) {
+      const panel = wrap.querySelector("#importListPanel");
+      const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+      const dateFrom = panel?.dataset.dateFrom ?? "";
+      const dateTo = panel?.dataset.dateTo ?? "";
       const notice = wrap.querySelector("#importListBackfillNotice");
-      const manualBid = getLastBatchIds().manual;
-      if (!manualBid) {
+      if (datasetType !== "manual") return;
+      if (!dateFrom || !dateTo) {
         if (notice) {
           notice.className = "alert alert--muted";
-          notice.innerHTML = "请先在<strong>手动排线数据</strong>下完成一次导入后再补算。";
+          notice.innerHTML = "请先选择排线日期起止并加载列表后再补算。";
         }
         return;
       }
@@ -440,7 +476,7 @@ function bindImportListInteractions(wrap) {
           const r = await fetch(`${API_BASE}/manual/backfill`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ batch_id: manualBid }),
+            body: JSON.stringify({ route_date_from: dateFrom, route_date_to: dateTo }),
           });
           let data;
           try {
@@ -497,13 +533,14 @@ function bindImportListInteractions(wrap) {
       }
       const datasetType = wrap.querySelector("#importListSource")?.value || "system";
       const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+      const warehouseName = wrap.querySelector("#importListWarehouse")?.value ?? "";
       void syncImportListPanel(wrap, {
         datasetType,
         page: 1,
         pageSize,
-        queryMode: "range",
         dateFrom: from,
         dateTo: to,
+        warehouseName,
       });
       return;
     }
@@ -517,58 +554,64 @@ function bindImportListInteractions(wrap) {
     const total = Number(panel.dataset.total) || 0;
     const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
     const datasetType = wrap.querySelector("#importListSource")?.value || "system";
-    const mode = panel.getAttribute("data-query-mode") === "range" ? "range" : "batch";
     const dateFrom = panel.dataset.dateFrom ?? "";
     const dateTo = panel.dataset.dateTo ?? "";
+    const warehouseName = wrap.querySelector("#importListWarehouse")?.value ?? panel.dataset.warehouse ?? "";
     if (prev && page > 1) {
-      if (mode === "range" && dateFrom && dateTo) {
-        void syncImportListPanel(wrap, {
-          datasetType,
-          page: page - 1,
-          pageSize,
-          queryMode: "range",
-          dateFrom,
-          dateTo,
-        });
-      } else {
-        void syncImportListPanel(wrap, { datasetType, page: page - 1, pageSize, queryMode: "batch" });
-      }
+      void syncImportListPanel(wrap, {
+        datasetType,
+        page: page - 1,
+        pageSize,
+        dateFrom,
+        dateTo,
+        warehouseName,
+      });
     } else if (next && page < totalPages) {
-      if (mode === "range" && dateFrom && dateTo) {
-        void syncImportListPanel(wrap, {
-          datasetType,
-          page: page + 1,
-          pageSize,
-          queryMode: "range",
-          dateFrom,
-          dateTo,
-        });
-      } else {
-        void syncImportListPanel(wrap, { datasetType, page: page + 1, pageSize, queryMode: "batch" });
-      }
+      void syncImportListPanel(wrap, {
+        datasetType,
+        page: page + 1,
+        pageSize,
+        dateFrom,
+        dateTo,
+        warehouseName,
+      });
     }
   });
 }
 
-async function restoreImportListPanelIfStored(wrap) {
-  const ids = getLastBatchIds();
-  if (!ids.system && !ids.manual) return;
-  let viewType = getImportListViewType();
-  if (!ids[viewType]) viewType = ids.system ? "system" : "manual";
+async function initImportDataListPanel(wrap, options = {}) {
+  const viewType = options.focusDataset ?? getImportListViewType();
+  if (options.focusDataset) setImportListViewType(options.focusDataset);
   const pageSize = 20;
-  wrap.insertAdjacentHTML(
-    "beforeend",
-    buildImportListPanelHtml({
-      selectedDatasetType: viewType,
-      page: 1,
-      pageSize,
-      payload: { items: [], total: 0 },
-      queryMode: "batch",
-      dateFrom: "",
-      dateTo: "",
-    })
-  );
-  await syncImportListPanel(wrap, { datasetType: viewType, page: 1, pageSize, queryMode: "batch" });
+  let dateFrom = sessionStorage.getItem(IMPORT_LIST_RANGE_FROM_KEY) || "";
+  let dateTo = sessionStorage.getItem(IMPORT_LIST_RANGE_TO_KEY) || "";
+  if (!dateFrom || !dateTo) {
+    const d = defaultDateRange();
+    dateFrom = dateFrom || d.from;
+    dateTo = dateTo || d.to;
+  }
+  if (!wrap.querySelector("#importListPanel")) {
+    wrap.insertAdjacentHTML(
+      "beforeend",
+      buildImportListPanelHtml({
+        selectedDatasetType: viewType,
+        page: 1,
+        pageSize,
+        payload: { items: [], total: 0, warehouse_options: [] },
+        dateFrom,
+        dateTo,
+        selectedWarehouse: "",
+        warehouseOptions: [],
+      })
+    );
+  }
+  await syncImportListPanel(wrap, {
+    datasetType: viewType,
+    page: 1,
+    pageSize,
+    dateFrom,
+    dateTo,
+  });
 }
 
 async function refreshApiStatusBanner() {
@@ -651,6 +694,16 @@ function matchStatusBadge(status) {
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
+function fillCompareWarehouseSelect(selectEl, overviewPayload, preserveValue) {
+  if (!selectEl) return;
+  const opts = (overviewPayload && overviewPayload.warehouse_options) || [];
+  const prev = preserveValue != null ? preserveValue : selectEl.value;
+  selectEl.innerHTML =
+    `<option value="">全部</option>` +
+    opts.map((w) => `<option value="${escapeHtml(w)}">${escapeHtml(w)}</option>`).join("");
+  if (prev && [...selectEl.options].some((o) => o.value === prev)) selectEl.value = prev;
+}
+
 function overviewSection(o) {
   if (!o || o.route_date == null) return "";
   const n = (v) => (v == null || v === "" ? "—" : v);
@@ -678,15 +731,21 @@ function route() {
   } else if (hash === "#import") {
     renderImport();
     setWorkspaceTitle("数据导入");
-  } else if (hash === "#data") {
-    renderData();
-    setWorkspaceTitle("数据管理");
-  } else if (hash === "#compare") {
-    renderCompare();
-    setWorkspaceTitle("数据比对");
-  } else if (hash === "#result") {
+  } else if (hash === "#diff-analysis") {
+    renderDiffAnalysis();
+    setWorkspaceTitle("差异分析");
+  } else if (hash === "#store-master") {
+    renderStoreMaster();
+    setWorkspaceTitle("仓店距离");
+  } else if (hash === "#customer-profiles") {
+    renderCustomerProfiles();
+    setWorkspaceTitle("客户基础数据");
+  } else if (hash === "#compare" || hash === "#result") {
+    if (hash === "#compare") {
+      history.replaceState(null, "", `${location.pathname}${location.search}#result`);
+    }
     renderResult();
-    setWorkspaceTitle("比对结果");
+    setWorkspaceTitle("线路差异结果");
   } else {
     renderImport();
     setWorkspaceTitle("数据导入");
@@ -695,13 +754,115 @@ function route() {
   refreshApiStatusBanner();
 }
 
-function renderImport() {
+function renderDiffAnalysis() {
+  const dr = defaultDateRange();
+  const defaultDay = dr.to;
   app.innerHTML = `
-    <div class="page-head">
-      <p>同一排线日期与数据类型会执行覆盖导入，历史批次自动失效。</p>
-      <p>「导出Excel」模板含<strong>车辆类型</strong>等必填列及「填写说明」页，请按表头顺序填写（系统与手工可填不同车型，如标箱与高栏）。</p>
+    <div class="page-head page-head--compact">
+      <p><small class="empty-hint">选择<strong>排线日期</strong>与<strong>数据类型</strong>，查询当日<strong>一店多车</strong>：同一门店出现在多个运单时列出；仅出现在一个运单中的门店不显示。项次为同一门店下运单号排序后的序号。<strong>全部</strong>为当日系统建议与手动排线有效数据合并统计。</small></p>
     </div>
     <div class="toolbar">
+      <div class="field">
+        <span class="field-label">排线日期</span>
+        <input type="date" id="diffAnalysisDate" value="${escapeHtml(defaultDay)}" />
+      </div>
+      <div class="field">
+        <span class="field-label">数据类型</span>
+        <select id="diffAnalysisDataset">
+          <option value="all" selected>全部</option>
+          <option value="system">系统建议数据</option>
+          <option value="manual">手动排线数据</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn--primary" id="diffAnalysisQuery">查询</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="diffAnalysisTable" aria-label="一店多车">
+        <thead>
+          <tr>
+            <th>门店名称</th>
+            <th style="width:7rem">运单数</th>
+            <th>运单与项次</th>
+          </tr>
+        </thead>
+        <tbody id="diffAnalysisTbody"></tbody>
+      </table>
+    </div>
+    <p id="diffAnalysisEmpty" class="empty-hint" hidden>该日无一店多车，或该日无有效导入数据。</p>
+  `;
+  const tbody = document.getElementById("diffAnalysisTbody");
+  const emptyEl = document.getElementById("diffAnalysisEmpty");
+  const runQuery = async () => {
+    const routeDate = document.getElementById("diffAnalysisDate").value;
+    const datasetType = document.getElementById("diffAnalysisDataset").value;
+    if (!routeDate) {
+      tbody.innerHTML = "";
+      emptyEl.removeAttribute("hidden");
+      emptyEl.textContent = "请选择排线日期。";
+      return;
+    }
+    emptyEl.setAttribute("hidden", "");
+    tbody.innerHTML = `<tr><td colspan="3" class="empty-hint">加载中…</td></tr>`;
+    const q = new URLSearchParams({ route_date: routeDate, dataset_type: datasetType });
+    try {
+      const resp = await fetch(`${API_BASE}/diff-analysis/multi-vehicle-stores?${q}`);
+      let data = {};
+      try {
+        data = await resp.json();
+      } catch {
+        data = {};
+      }
+      if (!resp.ok) {
+        const detail =
+          typeof data.detail === "string"
+            ? data.detail
+            : Array.isArray(data.detail)
+              ? data.detail.map((x) => x.msg || x).join(" ")
+              : JSON.stringify(data.detail || data);
+        tbody.innerHTML = `<tr><td colspan="3" class="alert alert--error">${escapeHtml(
+          String(detail).slice(0, 2000) || "请求失败",
+        )}</td></tr>`;
+        return;
+      }
+      const items = data.items || [];
+      if (items.length === 0) {
+        tbody.innerHTML = "";
+        emptyEl.removeAttribute("hidden");
+        emptyEl.textContent = "该日无一店多车，或该日无有效导入数据。";
+        return;
+      }
+      emptyEl.setAttribute("hidden", "");
+      tbody.innerHTML = items
+        .map((it) => {
+          const wbs = it.waybills || [];
+          const lis = wbs
+            .map(
+              (w) =>
+                `<li>项次 ${w.item_seq} · ${diffDatasetTypeTagSpan(w.dataset_type)}<code>${escapeHtml(String(w.waybill_no || ""))}</code></li>`,
+            )
+            .join("");
+          return `<tr>
+            <td>${escapeHtml(String(it.store_name || ""))}</td>
+            <td>${wbs.length}</td>
+            <td><ul class="diff-wb-list">${lis}</ul></td>
+          </tr>`;
+        })
+        .join("");
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="3">${backendUnreachableHtml(e)}</td></tr>`;
+    }
+  };
+  document.getElementById("diffAnalysisQuery").addEventListener("click", runQuery);
+}
+
+let importModalKeyController = null;
+
+function renderImport() {
+  app.innerHTML = `
+    <div class="page-head page-head--compact">
+      <p><small class="empty-hint">导入按<strong>排线日期 + 运单号</strong>更新或新增；模板含<strong>车辆类型</strong>等必填列。下方「数据明细」按日期查询，与是否导入无关。</small></p>
+    </div>
+    <div class="toolbar toolbar--import">
       <div class="field">
         <span class="field-label">数据类型</span>
         <select id="datasetType">
@@ -709,20 +870,87 @@ function renderImport() {
           <option value="manual">手动排线数据</option>
         </select>
       </div>
-      <div class="field" style="min-width:220px">
-        <span class="field-label">Excel 文件</span>
-        <input id="fileInput" type="file" accept=".xlsx,.xls" />
-      </div>
-      <button type="button" class="btn btn--secondary" id="exportTemplateBtn">导出Excel</button>
-      <button type="button" class="btn btn--primary" id="importBtn">开始导入</button>
+      <button type="button" class="btn btn--primary" id="openImportModalBtn">导入</button>
+      <button type="button" class="btn btn--secondary" id="exportTemplateBtn">导出 Excel</button>
     </div>
+    <div id="importMessageArea" class="import-message-area"></div>
     <div id="importRespWrap"></div>
+    <div id="importModal" class="modal" hidden>
+      <div class="modal__backdrop" data-import-modal-close aria-hidden="true"></div>
+      <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
+        <h2 id="importModalTitle" class="modal__title">导入 Excel</h2>
+        <p id="importModalTypeHint" class="modal__subtitle empty-hint"></p>
+        <div class="field field--modal-file">
+          <span class="field-label">选择文件</span>
+          <input id="importModalFile" type="file" accept=".xlsx,.xls" />
+        </div>
+        <div id="importModalInlineMsg" class="import-modal-inline-msg" hidden></div>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--secondary" id="importModalCancel">取消</button>
+          <button type="button" class="btn btn--primary" id="importModalSubmit">上传导入</button>
+        </div>
+      </div>
+    </div>
   `;
+
   const importRespWrap = document.getElementById("importRespWrap");
+  const importMessageArea = document.getElementById("importMessageArea");
+  const importModal = document.getElementById("importModal");
+  const importModalFile = document.getElementById("importModalFile");
+  const importModalInlineMsg = document.getElementById("importModalInlineMsg");
+  const importModalTypeHint = document.getElementById("importModalTypeHint");
+
+  function syncImportModalTypeHint() {
+    const datasetType = document.getElementById("datasetType").value;
+    importModalTypeHint.textContent =
+      datasetType === "system" ? "将导入为：系统建议数据" : "将导入为：手动排线数据";
+  }
+
+  function closeImportModal() {
+    importModalKeyController?.abort();
+    importModalKeyController = null;
+    importModal.classList.remove("modal--open");
+    importModal.setAttribute("hidden", "");
+    importModalFile.value = "";
+    importModalInlineMsg.innerHTML = "";
+    importModalInlineMsg.setAttribute("hidden", "");
+    const submit = document.getElementById("importModalSubmit");
+    if (submit) submit.disabled = false;
+  }
+
+  function openImportModal() {
+    syncImportModalTypeHint();
+    importModalInlineMsg.innerHTML = "";
+    importModalInlineMsg.setAttribute("hidden", "");
+    importModal.removeAttribute("hidden");
+    importModal.classList.add("modal--open");
+    importModalKeyController?.abort();
+    importModalKeyController = new AbortController();
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key === "Escape") closeImportModal();
+      },
+      { signal: importModalKeyController.signal }
+    );
+    importModalFile.focus();
+  }
+
   bindImportListInteractions(importRespWrap);
-  void restoreImportListPanelIfStored(importRespWrap).catch(() => {});
+  void initImportDataListPanel(importRespWrap).catch(() => {});
+
+  document.getElementById("openImportModalBtn").onclick = () => openImportModal();
+
+  importModal.querySelectorAll("[data-import-modal-close]").forEach((el) => {
+    el.addEventListener("click", () => closeImportModal());
+  });
+  document.getElementById("importModalCancel").onclick = () => closeImportModal();
+
+  document.getElementById("datasetType").addEventListener("change", () => {
+    if (importModal.classList.contains("modal--open")) syncImportModalTypeHint();
+  });
+
   document.getElementById("exportTemplateBtn").onclick = async () => {
-    const wrap = document.getElementById("importRespWrap");
     const datasetType = document.getElementById("datasetType").value;
     const url = `${API_BASE}/import-template?dataset_type=${encodeURIComponent(datasetType)}`;
     const filename =
@@ -741,18 +969,22 @@ function renderImport() {
       a.remove();
       URL.revokeObjectURL(href);
     } catch (err) {
-      wrap.innerHTML = backendUnreachableHtml(err);
+      importMessageArea.innerHTML = backendUnreachableHtml(err);
     }
   };
-  document.getElementById("importBtn").onclick = async () => {
-    const wrap = document.getElementById("importRespWrap");
+
+  document.getElementById("importModalSubmit").onclick = async () => {
     const datasetType = document.getElementById("datasetType").value;
-    const file = document.getElementById("fileInput").files[0];
+    const file = importModalFile.files[0];
+    const submit = document.getElementById("importModalSubmit");
     if (!file) {
-      wrap.innerHTML = `<div class="alert alert--muted">请先选择 .xlsx / .xls 文件。</div>`;
+      importModalInlineMsg.innerHTML = `<div class="alert alert--muted">请先选择 .xlsx / .xls 文件。</div>`;
+      importModalInlineMsg.removeAttribute("hidden");
       return;
     }
-    wrap.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
+    importModalInlineMsg.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
+    importModalInlineMsg.removeAttribute("hidden");
+    submit.disabled = true;
     const formData = new FormData();
     formData.append("file", file);
     const importUrl = `${API_BASE}/import/${datasetType}`;
@@ -766,95 +998,44 @@ function renderImport() {
         } catch {
           errPayload = { _nonJsonBody: (raw || "").slice(0, 800) };
         }
-        wrap.innerHTML = `<div class="alert alert--error">导入失败（HTTP ${resp.status}）</div><div class="code-block"><pre>${JSON.stringify(errPayload, null, 2)}</pre></div>`;
+        closeImportModal();
+        importMessageArea.innerHTML = `<div class="alert alert--error">导入失败（HTTP ${resp.status}）</div><div class="code-block"><pre>${escapeHtml(
+          JSON.stringify(errPayload, null, 2)
+        )}</pre></div>`;
         return;
       }
       const data = await resp.json();
       const jsonStr = JSON.stringify(data, null, 2);
-      let html = `<div class="code-block"><pre>${escapeHtml(jsonStr)}</pre></div>`;
-      const batchId = data.batch_id;
       const successRows = Number(data.success_rows) || 0;
+      const batchId = data.batch_id;
+      closeImportModal();
+      importMessageArea.innerHTML = `<div class="alert alert--muted">导入完成（成功 ${successRows} 条）。</div><div class="code-block"><pre>${escapeHtml(
+        jsonStr
+      )}</pre></div>`;
       if (batchId && successRows > 0) {
         setLastBatchId(datasetType, batchId);
-        setImportListViewType(datasetType);
-        try {
-          const payload = await fetchImportBatchPage(datasetType, batchId, 1, 20);
-          html += buildImportListPanelHtml({
-            selectedDatasetType: datasetType,
-            page: 1,
-            pageSize: 20,
-            payload,
-            queryMode: "batch",
-            dateFrom: "",
-            dateTo: "",
-          });
-        } catch (e2) {
-          html += backendUnreachableHtml(e2);
-        }
       }
-      wrap.innerHTML = html;
+      setImportListViewType(datasetType);
+      await initImportDataListPanel(importRespWrap, { focusDataset: datasetType });
     } catch (err) {
-      wrap.innerHTML = backendUnreachableHtml(err);
-    }
-  };
-}
-
-function renderData() {
-  app.innerHTML = `
-    <div class="page-head">
-      <p>当前 MVP 仅支持通过导入覆盖数据；列表维护能力可在后续版本接入。</p>
-    </div>
-    <div class="empty-hint">如需查看或导出明细，请使用「比对结果」页或连接数据库。</div>`;
-}
-
-function renderCompare() {
-  app.innerHTML = `
-    <div class="page-head">
-      <p>将按所选排线日对手动数据做补算（若需要），再执行系统与手工匹配并写入结果。</p>
-    </div>
-    <div class="toolbar">
-      <div class="field">
-        <span class="field-label">排线日期</span>
-        <input id="routeDate" type="date" />
-      </div>
-      <button type="button" class="btn btn--primary" id="compareBtn">开始比对</button>
-    </div>
-    <div id="compareRespWrap"></div>
-  `;
-  document.getElementById("compareBtn").onclick = async () => {
-    const wrap = document.getElementById("compareRespWrap");
-    const routeDate = document.getElementById("routeDate").value;
-    if (!routeDate) {
-      wrap.innerHTML = `<div class="alert alert--muted">请选择排线日期。</div>`;
-      return;
-    }
-    wrap.innerHTML = `<div class="alert alert--muted">正在执行比对…</div>`;
-    try {
-      const resp = await fetch(`${API_BASE}/compare/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ route_date: routeDate, match_threshold: 0.5 }),
-      });
-      const data = await resp.json();
-      if (data.calc?.failures?.length) {
-        data.failed_stores = data.calc.failures;
-      }
-      wrap.innerHTML = `<div class="code-block"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
-    } catch (err) {
-      wrap.innerHTML = backendUnreachableHtml(err);
+      closeImportModal();
+      importMessageArea.innerHTML = backendUnreachableHtml(err);
+    } finally {
+      submit.disabled = false;
     }
   };
 }
 
 function renderResult() {
   app.innerHTML = `
-    <div class="page-head">
-      <p>按日期查看概览与明细，可导出 CSV；每行可打开路线地图对照轨迹。</p>
+    <div class="page-head page-head--compact">
+      <p><small class="empty-hint">选择<strong>排线日期</strong>与<strong>匹配状态</strong>后点<strong>查询</strong>：将自动补算手动数据并写入比对结果，再展示概览与明细；可导出 CSV，表格中打开路线地图。</small></p>
     </div>
-    <div class="toolbar">
+    <div id="compareRespWrap" class="compare-run-status"></div>
+    <div class="toolbar toolbar--compare">
       <div class="field">
         <span class="field-label">排线日期</span>
-        <input id="resultDate" type="date" />
+        <input id="lineDiffDate" type="date" />
       </div>
       <div class="field">
         <span class="field-label">匹配状态</span>
@@ -863,6 +1044,12 @@ function renderResult() {
           <option value="full">完全匹配</option>
           <option value="partial">部分匹配</option>
           <option value="none">未匹配</option>
+        </select>
+      </div>
+      <div class="field">
+        <span class="field-label">仓库</span>
+        <select id="compareWarehouse">
+          <option value="">全部</option>
         </select>
       </div>
       <button type="button" class="btn btn--primary" id="queryBtn">查询</button>
@@ -874,12 +1061,13 @@ function renderResult() {
         <thead>
           <tr>
             <th>地图</th>
-            <th>系统运单</th>
-            <th>手工运单</th>
+            <th>运单号</th>
             <th>系统车型</th>
             <th>手工车型</th>
             <th>匹配状态</th>
             <th>门店匹配率</th>
+            <th>相同门店</th>
+            <th>不同门店</th>
             <th>匹配度</th>
             <th>体积差异</th>
             <th>线路一致</th>
@@ -894,35 +1082,76 @@ function renderResult() {
     <p id="resultEmpty" class="empty-hint" style="display:none">暂无数据，请先选择日期并点击查询。</p>
   `;
   document.getElementById("queryBtn").onclick = async () => {
-    const routeDate = document.getElementById("resultDate").value;
+    const routeDate = document.getElementById("lineDiffDate").value;
     const status = document.getElementById("matchStatus").value;
+    const whSel = document.getElementById("compareWarehouse");
+    const selectedWh = (whSel && whSel.value) || "";
     const overviewArea = document.getElementById("overviewArea");
     const tbody = document.getElementById("resultTable");
     const emptyEl = document.getElementById("resultEmpty");
+    const statusWrap = document.getElementById("compareRespWrap");
     if (!routeDate) {
+      statusWrap.innerHTML = "";
       overviewArea.innerHTML = `<div class="alert alert--muted">请选择排线日期。</div>`;
       tbody.innerHTML = "";
       emptyEl.style.display = "block";
       return;
     }
-    overviewArea.innerHTML = `<div class="alert alert--muted">加载中…</div>`;
+    statusWrap.innerHTML = `<div class="alert alert--muted">正在执行比对并加载数据…</div>`;
+    overviewArea.innerHTML = "";
+    tbody.innerHTML = "";
     try {
-      const overviewResp = await fetch(`${API_BASE}/compare/overview?route_date=${routeDate}`);
+      const runResp = await fetch(`${API_BASE}/compare/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ route_date: routeDate, match_threshold: 0.5 }),
+      });
+      let runData = {};
+      try {
+        runData = await runResp.json();
+      } catch {
+        runData = {};
+      }
+      if (!runResp.ok) {
+        statusWrap.innerHTML = `<div class="alert alert--error"><strong>比对失败</strong>（HTTP ${runResp.status}）<pre>${escapeHtml(
+          JSON.stringify(runData, null, 2).slice(0, 1200)
+        )}</pre></div>`;
+        emptyEl.style.display = "block";
+        return;
+      }
+      if (runData.calc?.failures?.length) {
+        statusWrap.innerHTML = `<div class="alert alert--error">手动数据补算部分失败：<pre>${escapeHtml(
+          JSON.stringify(runData.calc.failures, null, 2).slice(0, 800)
+        )}</pre></div>`;
+      } else {
+        statusWrap.innerHTML = "";
+      }
+      overviewArea.innerHTML = `<div class="alert alert--muted">加载概览与明细…</div>`;
+      const whQ = selectedWh.trim()
+        ? `&warehouse_name=${encodeURIComponent(selectedWh.trim())}`
+        : "";
+      const overviewResp = await fetch(`${API_BASE}/compare/overview?route_date=${routeDate}${whQ}`);
       const overviewData = await overviewResp.json();
+      fillCompareWarehouseSelect(whSel, overviewData, selectedWh);
       overviewArea.innerHTML = overviewSection(overviewData);
-      const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
+      const whForRows = (document.getElementById("compareWarehouse")?.value || "").trim();
+      const whRowsQ = whForRows ? `&warehouse_name=${encodeURIComponent(whForRows)}` : "";
+      const resultResp = await fetch(
+        `${API_BASE}/compare/results?route_date=${routeDate}&match_status=${encodeURIComponent(status)}${whRowsQ}`,
+      );
       const rows = await resultResp.json();
       tbody.innerHTML = rows
         .map(
           (r) =>
             `<tr>
             <td><button type="button" class="btn btn--map map-btn" data-crid="${r.id}">地图</button></td>
-            <td>${r.sys_waybill_no ?? "—"}</td>
-            <td>${r.manual_waybill_no ?? "—"}</td>
+            ${formatCompareWaybillCell(r.sys_waybill_no, r.manual_waybill_no)}
             <td>${r.sys_vehicle_type ?? "—"}</td>
             <td>${r.manual_vehicle_type ?? "—"}</td>
             <td>${matchStatusBadge(r.match_status)}</td>
             <td>${r.store_match_rate ?? "—"}</td>
+            <td class="cell-stores">${r.same_stores != null && r.same_stores !== "" ? escapeHtml(String(r.same_stores)) : "—"}</td>
+            ${formatDiffStoresCell(r.diff_stores_system, r.diff_stores_manual)}
             <td>${r.match_score ?? "—"}</td>
             <td>${r.volume_diff ?? "—"}</td>
             <td>${r.line_consistent ? "是" : "否"}</td>
@@ -933,16 +1162,20 @@ function renderResult() {
         )
         .join("");
       emptyEl.style.display = rows.length ? "none" : "block";
-      if (!rows.length) emptyEl.textContent = "该条件下没有比对记录，可先执行「数据比对」。";
+      if (!rows.length) emptyEl.textContent = "该条件下没有线路差异记录。";
     } catch (err) {
-      overviewArea.innerHTML = backendUnreachableHtml(err);
+      statusWrap.innerHTML = backendUnreachableHtml(err);
+      overviewArea.innerHTML = "";
       tbody.innerHTML = "";
     }
   };
   document.getElementById("exportBtn").onclick = () => {
-    const routeDate = document.getElementById("resultDate").value;
+    const routeDate = document.getElementById("lineDiffDate").value;
     if (!routeDate) return;
-    window.open(`${API_BASE}/compare/export?route_date=${routeDate}`, "_blank");
+    const wh = (document.getElementById("compareWarehouse")?.value || "").trim();
+    let url = `${API_BASE}/compare/export?route_date=${routeDate}`;
+    if (wh) url += `&warehouse_name=${encodeURIComponent(wh)}`;
+    window.open(url, "_blank");
   };
   document.getElementById("resultTable").onclick = (ev) => {
     const btn = ev.target.closest(".map-btn");
@@ -950,6 +1183,54 @@ function renderResult() {
     const id = btn.getAttribute("data-crid");
     if (id) window.location.hash = `#route-map?id=${id}`;
   };
+}
+
+function formatMarkerLngLatSuffix(m) {
+  const lng = m && m.lng;
+  const lat = m && m.lat;
+  if (lng == null || lat == null) return "";
+  const x = Number(lng);
+  const y = Number(lat);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+  return ` <span class="route-map-ll" title="经度,纬度（与接口/库中数值一致，未做舍入）">${lng}, ${lat}</span>`;
+}
+
+/**
+ * 路线地图页：按运单展示送货顺序（列表为 1 起的顺序号，与地图标注一致；数据来自 /compare/route-map 的 markers，名称后附经纬度）。
+ */
+function buildRouteMapWaybillStopsSection(heading, waybillNo, markers) {
+  const hasWb = waybillNo != null && String(waybillNo).trim() !== "";
+  const wb = hasWb ? String(waybillNo) : "—";
+  const head = `<div class="route-map-wb-head"><span class="route-map-wb-label">${escapeHtml(heading)}</span> <code class="route-map-wb-no">${escapeHtml(wb)}</code></div>`;
+  if (!markers || !markers.length) {
+    return `<section class="route-map-wb-section">${head}<p class="route-map-sub">送货顺序</p><p class="empty-hint" style="padding:12px 0 0">暂无站点</p></section>`;
+  }
+  const sorted = [...markers].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  const li = sorted
+    .map((m) => {
+      const kindLabel = m.kind === "warehouse" ? "仓库" : "门店";
+      const kcls = m.kind === "warehouse" ? " route-map-kind--wh" : " route-map-kind--st";
+      const ll = formatMarkerLngLatSuffix(m);
+      return `<li><span class="route-map-kind${kcls}">${kindLabel}</span> <span class="route-map-nm">${escapeHtml(
+        m.name || "",
+      )}</span>${ll}</li>`;
+    })
+    .join("");
+  return `<section class="route-map-wb-section">${head}<p class="route-map-sub">送货顺序（与地图标注一致，自 1 起）</p><ol class="route-map-stop-ol">${li}</ol></section>`;
+}
+
+function buildRouteMapStopsBlock(data) {
+  const out = [];
+  const sysM = (data.system && data.system.markers) || [];
+  const manM = (data.manual && data.manual.markers) || [];
+  if (data.sys_waybill_no != null && String(data.sys_waybill_no).trim() !== "" || sysM.length) {
+    out.push(buildRouteMapWaybillStopsSection("系统运单", data.sys_waybill_no, sysM));
+  }
+  if (data.manual_waybill_no != null && String(data.manual_waybill_no).trim() !== "" || manM.length) {
+    out.push(buildRouteMapWaybillStopsSection("手工运单", data.manual_waybill_no, manM));
+  }
+  if (!out.length) return "";
+  return `<div class="route-map-stops-grid">${out.join("")}</div>`;
 }
 
 function renderRouteMap() {
@@ -963,15 +1244,16 @@ function renderRouteMap() {
         高德 Key 来自 <code style="font-size:0.85em">frontend/amap-config.js</code>；可用 localStorage 覆盖。
       </p>
       <div id="routeMapMeta" class="map-meta"></div>
+      <div id="routeMapStops" class="route-map-stops-wrap"></div>
       <div id="mapContainer"></div>
       <div id="routeMapErr"></div>
-      <a class="back-link" href="#result">← 返回比对结果</a>
+      <a class="back-link" href="#result">← 返回线路差异结果</a>
     </div>
   `;
   const errEl = document.getElementById("routeMapErr");
   const metaEl = document.getElementById("routeMapMeta");
   if (!rid || Number.isNaN(rid)) {
-    errEl.innerHTML = `<div class="alert alert--error">缺少比对行 id，请从「比对结果」表格中点击「地图」进入。</div>`;
+    errEl.innerHTML = `<div class="alert alert--error">缺少比对行 id，请从「线路差异结果」表格中点击「地图」进入。</div>`;
     return;
   }
 
@@ -989,6 +1271,19 @@ function renderRouteMap() {
       return;
     }
 
+    const matchRateDisp =
+      data.store_match_rate != null && data.store_match_rate !== ""
+        ? `${escapeHtml(String(data.store_match_rate))}%`
+        : "—";
+    const volBits = [];
+    if (data.sys_volume != null && data.sys_volume !== "") {
+      volBits.push(`系统 ${escapeHtml(String(data.sys_volume))} m³`);
+    }
+    if (data.manual_volume != null && data.manual_volume !== "") {
+      volBits.push(`手工 ${escapeHtml(String(data.manual_volume))} m³`);
+    }
+    const volDisp = volBits.length ? volBits.join(" · ") : "—";
+
     metaEl.innerHTML = `
       <div><strong>${data.warehouse_name || "—"}</strong></div>
       <div style="margin-top:8px">${matchStatusBadge(data.match_status)} 
@@ -997,10 +1292,17 @@ function renderRouteMap() {
         <span style="margin-left:12px;color:var(--text-secondary)">手工 <strong>${data.manual_waybill_no ?? "—"}</strong>
           <small>（${data.manual_vehicle_type ?? "—"}）</small></span>
       </div>
+      <div class="map-meta__stats" style="margin-top:10px;font-size:0.88rem;color:var(--text-secondary);line-height:1.6">
+        <span>匹配度 <strong style="color:var(--text)">${matchRateDisp}</strong></span>
+        <span style="margin-left:18px">配送体积 <strong style="color:var(--text)">${volDisp}</strong></span>
+      </div>
       <div class="legend">
         <span><span style="color:#1677FF;font-weight:700">■</span> 系统路线</span>
         <span><span style="color:#FF4D4F;font-weight:700">■</span> 手工路线（虚线）</span>
       </div>`;
+
+    const stopsEl = document.getElementById("routeMapStops");
+    if (stopsEl) stopsEl.innerHTML = buildRouteMapStopsBlock(data);
 
     const key =
       (typeof window.__AMAP_WEB_KEY__ === "string" && window.__AMAP_WEB_KEY__) ||
@@ -1066,10 +1368,11 @@ function renderRouteMap() {
     const labelSrc =
       data.system?.markers?.length > 0 ? data.system.markers : data.manual?.markers || [];
     labelSrc.forEach((m) => {
+      const n = (m.seq ?? 0) + 1;
       new AMap.Marker({
         position: [m.lng, m.lat],
-        title: `${m.seq} ${m.name}`,
-        label: { content: String(m.seq), direction: "top" },
+        title: `${n} ${m.name}`,
+        label: { content: String(n), direction: "top" },
         map,
       });
     });
@@ -1080,6 +1383,771 @@ function renderRouteMap() {
       errEl.innerHTML = `<div class="alert alert--error">当前记录无可用轨迹（可能补算未完成或缺少门店）。</div>`;
     }
   })();
+}
+
+const CP = {
+  skip: 0,
+  limit: 20,
+  q: "",
+  editId: null,
+  modalKey: null,
+};
+
+/** 与后端 `CustomerProfile` 可编辑字段一致（不含 id/created_at/updated_at） */
+const CP_FIELDS = [
+  { k: "customer_code", label: "客户代码", t: "text", req: true },
+  { k: "customer_name", label: "客户名称", t: "text", req: true },
+  { k: "customer_type", label: "客户类型", t: "text" },
+  { k: "business_status", label: "营业状态", t: "text" },
+  { k: "contact_name", label: "联系人", t: "text" },
+  { k: "business_hours", label: "营业时间", t: "text" },
+  { k: "contact_phone", label: "联系电话", t: "text" },
+  { k: "province", label: "省", t: "text" },
+  { k: "city", label: "市", t: "text" },
+  { k: "district", label: "区", t: "text" },
+  { k: "county", label: "县", t: "text" },
+  { k: "address", label: "地址", t: "area" },
+  { k: "performance_sla", label: "履约时效", t: "text" },
+  { k: "line_count", label: "线路数", t: "text" },
+  { k: "route_line", label: "所属线路", t: "text" },
+  { k: "e_sign", label: "开启电子签", t: "text" },
+  { k: "latest_delivery", label: "最晚送达时间", t: "text" },
+  { k: "auth_status", label: "认证状态", t: "text" },
+  { k: "settlement_warehouse_km", label: "结算仓店距离（km）", t: "num" },
+  { k: "warehouse_store_km", label: "仓店距离（km）", t: "num" },
+  { k: "customer_coordinate", label: "客户坐标", t: "text" },
+  { k: "driver_coordinate", label: "司机上报坐标", t: "text" },
+  { k: "carrier", label: "所属承运商", t: "text" },
+  { k: "staff_auth_detail", label: "员工认证明细", t: "area" },
+  { k: "customer_group", label: "所属客户组", t: "text" },
+  { k: "group_min_order", label: "客户组起送量", t: "text" },
+  { k: "min_order_type", label: "起送量类型", t: "text" },
+  { k: "min_order", label: "起送量", t: "text" },
+  { k: "delivery_schedule", label: "配送排程", t: "text" },
+  { k: "loop_mode", label: "循环模式", t: "text" },
+  { k: "remark", label: "客户备注", t: "area" },
+  { k: "consignee", label: "收货人", t: "text" },
+  { k: "delivery_coordinate", label: "收货坐标", t: "text" },
+  { k: "consignee_phone", label: "收货电话", t: "text" },
+  { k: "delivery_address", label: "收货地址", t: "area" },
+  { k: "delivery_province", label: "收货省", t: "text" },
+  { k: "delivery_city", label: "收货市", t: "text" },
+  { k: "delivery_district", label: "收货区", t: "text" },
+  { k: "delivery_street", label: "收货街道", t: "text" },
+  { k: "import_source", label: "写入来源", t: "text" },
+];
+
+function cpFieldInputHtml(f, val) {
+  const v = val != null && val !== "" ? String(val) : "";
+  const req = f.req ? " *" : "";
+  if (f.t === "area") {
+    return `<div class="field field--cp">
+      <span class="field-label">${escapeHtml(f.label)}${req}</span>
+      <textarea data-cp-key="${f.k}" rows="2" class="cp-input">${escapeHtml(v)}</textarea>
+    </div>`;
+  }
+  if (f.t === "num") {
+    const numV = v === "" || v === "null" ? "" : v;
+    return `<div class="field field--cp">
+      <span class="field-label">${escapeHtml(f.label)}</span>
+      <input class="cp-input" type="number" step="any" data-cp-key="${f.k}" value="${escapeHtml(
+        numV,
+      )}" />
+    </div>`;
+  }
+  return `<div class="field field--cp">
+    <span class="field-label">${escapeHtml(f.label)}${req}</span>
+    <input class="cp-input" type="text" data-cp-key="${f.k}" value="${escapeHtml(v)}" />
+  </div>`;
+}
+
+function cpBuildFormFieldsHtml() {
+  return CP_FIELDS.map((f) => cpFieldInputHtml(f, "")).join("");
+}
+
+function cpFormValuesFromData(data) {
+  if (!data) return;
+  for (const f of CP_FIELDS) {
+    const el = document.querySelector(`[data-cp-key="${f.k}"]`);
+    if (!el) continue;
+    let v = data[f.k];
+    if (v == null) v = "";
+    else v = String(v);
+    if (f.t === "num" && (v === "" || v === "null")) {
+      el.value = "";
+    } else {
+      el.value = v;
+    }
+  }
+}
+
+function cpFormCollectPayload() {
+  const o = {};
+  for (const f of CP_FIELDS) {
+    const el = document.querySelector(`[data-cp-key="${f.k}"]`);
+    if (!el) continue;
+    const raw = "value" in el ? el.value : "";
+    if (f.t === "num") {
+      const t = String(raw).trim();
+      o[f.k] = t === "" ? null : parseFloat(t);
+    } else {
+      const t = String(raw).trim();
+      o[f.k] = t === "" ? null : t;
+    }
+  }
+  return o;
+}
+
+function cpOpenModal() {
+  const m = document.getElementById("cp-modal");
+  if (!m) return;
+  m.removeAttribute("hidden");
+  m.classList.add("modal--open");
+  CP.modalKey?.abort();
+  CP.modalKey = new AbortController();
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape") cpCloseModal();
+    },
+    { signal: CP.modalKey.signal },
+  );
+}
+
+function cpCloseModal() {
+  const m = document.getElementById("cp-modal");
+  if (!m) return;
+  CP.modalKey?.abort();
+  CP.modalKey = null;
+  m.classList.remove("modal--open");
+  m.setAttribute("hidden", "");
+  CP.editId = null;
+}
+
+async function cpLoadList() {
+  const tbody = document.getElementById("cp-tbody");
+  const totalEl = document.getElementById("cp-total");
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="7" class="empty-hint">加载中…</td></tr>`;
+  const q = new URLSearchParams({
+    skip: String(CP.skip),
+    limit: String(CP.limit),
+  });
+  if (CP.q) q.set("search", CP.q);
+  try {
+    const r = await fetch(`${API_BASE}/customer-profiles?${q}`);
+    const d = await r.json();
+    if (!r.ok) {
+      tbody.innerHTML = `<tr><td colspan="7" class="alert alert--error">加载失败</td></tr>`;
+      return;
+    }
+    if (totalEl) totalEl.textContent = `共 ${d.total} 条`;
+    const items = d.items || [];
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-hint">暂无数据</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items
+      .map(
+        (it) => {
+          const addr = (it.delivery_address || it.address || "").replace(/\s+/g, " ");
+          const short =
+            addr.length > 32 ? `${escapeHtml(addr.slice(0, 32))}…` : escapeHtml(addr);
+          return `<tr>
+      <td>${it.id}</td>
+      <td><code>${escapeHtml(String(it.customer_code || ""))}</code></td>
+      <td>${escapeHtml(String(it.customer_name || ""))}</td>
+      <td>${escapeHtml(String(it.city || "—"))}</td>
+      <td>${escapeHtml(String(it.contact_phone || "—"))}</td>
+      <td title="${escapeHtml(addr)}">${short || "—"}</td>
+      <td class="table-actions">
+        <button type="button" class="btn btn--secondary btn--sm" data-cp="edit" data-id="${it.id}">编辑</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-cp="del" data-id="${it.id}" style="color:var(--danger)">删除</button>
+      </td>
+    </tr>`;
+        },
+      )
+      .join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7">${backendUnreachableHtml(e)}</td></tr>`;
+  }
+}
+
+function renderCustomerProfiles() {
+  CP.editId = null;
+  app.innerHTML = `
+    <div class="page-head page-head--compact">
+      <p><small class="empty-hint">管理表 <code>customer_profile</code>。导入需列「客户代码」「客户名称」「收货坐标」等，与导出的 <strong>客户列表</strong> 模板一致。页面新增时可将「写入来源」填为 <code>页面录入</code>。</small></p>
+    </div>
+    <div class="toolbar" style="flex-wrap:wrap">
+      <div class="field" style="min-width:200px">
+        <span class="field-label">搜索</span>
+        <input type="search" id="cp-q" placeholder="代码 / 名称" value="${escapeHtml(CP.q)}" />
+      </div>
+      <button type="button" class="btn btn--secondary" id="cp-search">查询</button>
+      <button type="button" class="btn btn--secondary" id="cp-refresh">刷新</button>
+      <button type="button" class="btn btn--primary" id="cp-new">新增</button>
+      <a class="btn btn--secondary" id="cp-export" href="${API_BASE}/customer-profiles/export" target="_blank" rel="noopener">导出 Excel</a>
+      <div class="field" style="min-width:200px">
+        <span class="field-label">导入</span>
+        <input type="file" id="cp-file" accept=".xlsx" />
+      </div>
+      <button type="button" class="btn btn--primary" id="cp-import">上传导入</button>
+      <span id="cp-total" class="field-label" style="align-self:center"></span>
+    </div>
+    <div id="cp-msg" style="margin-top:8px"></div>
+    <div class="table-scroll">
+      <table class="data-table" id="cp-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>客户代码</th>
+            <th>客户名称</th>
+            <th>市</th>
+            <th>联系电话</th>
+            <th>地址摘要</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="cp-tbody"></tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <button type="button" class="btn btn--secondary" id="cp-prev" ${CP.skip <= 0 ? "disabled" : ""}>上一页</button>
+      <button type="button" class="btn btn--secondary" id="cp-next">下一页</button>
+    </div>
+    <div id="cp-modal" class="modal" hidden>
+      <div class="modal__backdrop" data-cp-m-close></div>
+      <div class="modal__dialog modal__dialog--xl" role="dialog" aria-modal="true">
+        <h2 class="modal__title" id="cp-modal-title">客户</h2>
+        <p class="empty-hint" style="margin-top:0">标 * 为必填。保存时写入数据库。</p>
+        <div class="cp-form-grid" id="cp-form-fields">${cpBuildFormFieldsHtml()}</div>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--secondary" data-cp-m-close>取消</button>
+          <button type="button" class="btn btn--primary" id="cp-save">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("cp-search")?.addEventListener("click", () => {
+    CP.q = (document.getElementById("cp-q")?.value || "").trim();
+    CP.skip = 0;
+    void cpLoadList();
+  });
+  document.getElementById("cp-refresh")?.addEventListener("click", () => {
+    void cpLoadList();
+  });
+  document.getElementById("cp-new")?.addEventListener("click", () => {
+    CP.editId = null;
+    const t = document.getElementById("cp-modal-title");
+    if (t) t.textContent = "新增客户";
+    const wrap = document.getElementById("cp-form-fields");
+    if (wrap) {
+      wrap.innerHTML = cpBuildFormFieldsHtml();
+      const imp = document.querySelector(`[data-cp-key="import_source"]`);
+      if (imp) imp.value = "页面录入";
+    }
+    cpOpenModal();
+  });
+  document.getElementById("cp-import")?.addEventListener("click", async () => {
+    const file = document.getElementById("cp-file")?.files?.[0];
+    if (!file) {
+      const el = document.getElementById("cp-msg");
+      if (el) el.innerHTML = `<div class="alert alert--muted">请先选择 .xlsx 文件</div>`;
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    const el = document.getElementById("cp-msg");
+    if (el) el.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
+    const r = await fetch(
+      `${API_BASE}/customer-list/import?${new URLSearchParams({ data_source: "页面导入" })}`,
+      { method: "POST", body: fd },
+    );
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">${escapeHtml(
+          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || "导入失败",
+        )}</div>`;
+      }
+      return;
+    }
+    if (el) {
+      el.innerHTML = `<div class="code-block"><pre>${escapeHtml(JSON.stringify(d, null, 2))}</pre></div>`;
+    }
+    void cpLoadList();
+  });
+  document.getElementById("cp-prev")?.addEventListener("click", () => {
+    if (CP.skip <= 0) return;
+    CP.skip = Math.max(0, CP.skip - CP.limit);
+    void cpLoadList();
+  });
+  document.getElementById("cp-next")?.addEventListener("click", () => {
+    CP.skip += CP.limit;
+    void cpLoadList();
+  });
+  document.getElementById("cp-modal")?.querySelectorAll("[data-cp-m-close]").forEach((b) => {
+    b.addEventListener("click", () => cpCloseModal());
+  });
+  document.getElementById("cp-save")?.addEventListener("click", async () => {
+    const body = cpFormCollectPayload();
+    if (!(body.customer_code || "").trim() || !(body.customer_name || "").trim()) {
+      const el = document.getElementById("cp-msg");
+      if (el) el.innerHTML = `<div class="alert alert--error">请填写客户代码与客户名称</div>`;
+      return;
+    }
+    const isEdit = CP.editId != null;
+    const url = isEdit
+      ? `${API_BASE}/customer-profiles/${CP.editId}`
+      : `${API_BASE}/customer-profiles`;
+    const r = await fetch(url, {
+      method: isEdit ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const el = document.getElementById("cp-msg");
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">${escapeHtml(
+          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || "保存失败",
+        )}</div>`;
+      }
+      return;
+    }
+    cpCloseModal();
+    const el = document.getElementById("cp-msg");
+    if (el) el.innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">已保存</div>`;
+    void cpLoadList();
+  });
+
+  document.getElementById("cp-table")?.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const id = t.getAttribute("data-id");
+    if (t.getAttribute("data-cp") === "edit" && id) {
+      CP.editId = parseInt(id, 10);
+      const r = await fetch(`${API_BASE}/customer-profiles/${id}`);
+      const it = await r.json();
+      if (!r.ok) return;
+      const title = document.getElementById("cp-modal-title");
+      if (title) title.textContent = "编辑客户";
+      const wrap = document.getElementById("cp-form-fields");
+      if (wrap) {
+        wrap.innerHTML = cpBuildFormFieldsHtml();
+        cpFormValuesFromData(it);
+      }
+      cpOpenModal();
+    }
+    if (t.getAttribute("data-cp") === "del" && id) {
+      if (!window.confirm("确定删除该条客户基础资料？")) return;
+      const r2 = await fetch(`${API_BASE}/customer-profiles/${id}`, { method: "DELETE" });
+      if (r2.ok) {
+        void cpLoadList();
+      } else {
+        const x = await r2.json().catch(() => ({}));
+        const el = document.getElementById("cp-msg");
+        if (el) {
+          el.innerHTML = `<div class="alert alert--error">${escapeHtml(x.detail || "删除失败")}</div>`;
+        }
+      }
+    }
+  });
+  void cpLoadList();
+}
+
+const SM = {
+  tab: "coord",
+  cSkip: 0,
+  pSkip: 0,
+  cQ: "",
+  pQ: "",
+  limit: 20,
+  editCoordId: null,
+  editPairId: null,
+};
+
+async function smLoadCoord() {
+  const wrap = document.getElementById("sm-coord-tbody");
+  if (!wrap) return;
+  wrap.innerHTML = `<tr><td colspan="6" class="empty-hint">加载中…</td></tr>`;
+  const q = new URLSearchParams({
+    skip: String(SM.cSkip),
+    limit: String(SM.limit),
+  });
+  if (SM.cQ) q.set("search", SM.cQ);
+  try {
+    const r = await fetch(`${API_BASE}/store-coordinates?${q}`);
+    const d = await r.json();
+    if (!r.ok) {
+      wrap.innerHTML = `<tr><td colspan="6" class="alert alert--error">加载失败</td></tr>`;
+      return;
+    }
+    const elTotal = document.getElementById("sm-coord-total");
+    if (elTotal) elTotal.textContent = `共 ${d.total} 条`;
+    if (!d.items || !d.items.length) {
+      wrap.innerHTML = `<tr><td colspan="6" class="empty-hint">暂无数据</td></tr>`;
+      return;
+    }
+    wrap.innerHTML = d.items
+      .map(
+        (it) => `<tr>
+      <td>${it.id}</td>
+      <td>${escapeHtml(it.store_name || "")}</td>
+      <td>${it.longitude}</td>
+      <td>${it.latitude}</td>
+      <td>${escapeHtml(it.data_source || "—")}</td>
+      <td class="table-actions">
+        <button type="button" class="btn btn--secondary btn--sm" data-sm="ec" data-id="${it.id}">编辑</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-sm="dc" data-id="${it.id}" style="color:var(--danger)">删除</button>
+      </td>
+    </tr>`,
+      )
+      .join("");
+  } catch (e) {
+    wrap.innerHTML = `<tr><td colspan="6">${backendUnreachableHtml(e)}</td></tr>`;
+  }
+}
+
+async function smLoadPair() {
+  const wrap = document.getElementById("sm-pair-tbody");
+  if (!wrap) return;
+  wrap.innerHTML = `<tr><td colspan="5" class="empty-hint">加载中…</td></tr>`;
+  const q = new URLSearchParams({ skip: String(SM.pSkip), limit: String(SM.limit) });
+  if (SM.pQ) q.set("search", SM.pQ);
+  try {
+    const r = await fetch(`${API_BASE}/store-pair-distances?${q}`);
+    const d = await r.json();
+    if (!r.ok) {
+      wrap.innerHTML = `<tr><td colspan="5" class="alert alert--error">加载失败</td></tr>`;
+      return;
+    }
+    const elTotal = document.getElementById("sm-pair-total");
+    if (elTotal) elTotal.textContent = `共 ${d.total} 条`;
+    if (!d.items || !d.items.length) {
+      wrap.innerHTML = `<tr><td colspan="5" class="empty-hint">暂无数据</td></tr>`;
+      return;
+    }
+    wrap.innerHTML = d.items
+      .map(
+        (it) => `<tr>
+      <td>${it.id}</td>
+      <td>${escapeHtml(it.store_from || "")}</td>
+      <td>${escapeHtml(it.store_to || "")}</td>
+      <td>${it.distance_km}</td>
+      <td class="table-actions">
+        <button type="button" class="btn btn--secondary btn--sm" data-sm="ep" data-id="${it.id}">编辑</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-sm="dp" data-id="${it.id}" style="color:var(--danger)">删除</button>
+      </td>
+    </tr>`,
+      )
+      .join("");
+  } catch (e) {
+    wrap.innerHTML = `<tr><td colspan="5">${backendUnreachableHtml(e)}</td></tr>`;
+  }
+}
+
+function smRefreshVisibility() {
+  const isC = SM.tab === "coord";
+  document.getElementById("sm-tab-coord")?.classList.toggle("is-active", isC);
+  document.getElementById("sm-tab-pair")?.classList.toggle("is-active", !isC);
+  const pc = document.getElementById("sm-p-coord");
+  const pp = document.getElementById("sm-p-pair");
+  if (pc) pc.hidden = !isC;
+  if (pp) pp.hidden = isC;
+}
+
+function renderStoreMaster() {
+  SM.editCoordId = null;
+  SM.editPairId = null;
+  app.innerHTML = `
+    <div class="page-head">
+      <p>维护 <strong>门店坐标</strong>（<code>store_coordinate</code>）与 <strong>仓店有向距离</strong>（<code>store_pair_distance</code>）。导入 Excel 表头与脚本 <code>import_store_distances.py</code> 一致：客户1｜客户1坐标｜客户2｜客户2坐标｜距离（km）。</p>
+    </div>
+    <div class="subnav-tabs" role="tablist">
+      <button type="button" class="subnav-tab" id="sm-tab-coord" data-sm-t="coord" role="tab">门店坐标</button>
+      <button type="button" class="subnav-tab" id="sm-tab-pair" data-sm-t="pair" role="tab">仓店距离</button>
+    </div>
+    <div id="sm-p-coord" ${SM.tab === "pair" ? "hidden" : ""}>
+      <div class="toolbar" style="flex-wrap:wrap">
+        <div class="field" style="min-width:180px">
+          <span class="field-label">搜索门店名</span>
+          <input type="search" id="sm-cq" placeholder="模糊" value="${escapeHtml(SM.cQ)}" />
+        </div>
+        <button type="button" class="btn btn--secondary" id="sm-c-search">查询</button>
+        <button type="button" class="btn btn--secondary" id="sm-c-refresh">刷新</button>
+        <button type="button" class="btn btn--primary" id="sm-c-new">新增坐标</button>
+        <a class="btn btn--secondary" id="sm-export" href="${API_BASE}/store-master/export" target="_blank" rel="noopener">导出 Excel</a>
+        <div class="field" style="min-width:200px">
+          <span class="field-label">导入</span>
+          <input type="file" id="sm-c-file" accept=".xlsx" />
+        </div>
+        <button type="button" class="btn btn--primary" id="sm-c-import">上传导入</button>
+        <span id="sm-coord-total" class="field-label" style="align-self:center"></span>
+      </div>
+      <div id="sm-coord-form" class="sm-form" hidden>
+        <div class="field"><span class="field-label">门店名称</span><input id="sm-cfn" type="text" /></div>
+        <div class="field"><span class="field-label">经度</span><input id="sm-cfl" type="number" step="any" /></div>
+        <div class="field"><span class="field-label">纬度</span><input id="sm-cfa" type="number" step="any" /></div>
+        <div class="field"><span class="field-label">数据来源</span><input id="sm-cfs" type="text" placeholder="可选" /></div>
+        <div class="toolbar">
+          <button type="button" class="btn btn--primary" id="sm-c-save">保存</button>
+          <button type="button" class="btn btn--secondary" id="sm-c-cancel">取消</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="sm-coord-table">
+          <thead><tr><th>ID</th><th>门店名称</th><th>经度</th><th>纬度</th><th>数据来源</th><th>操作</th></tr></thead>
+          <tbody id="sm-coord-tbody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn btn--secondary" id="sm-c-prev" ${SM.cSkip <= 0 ? "disabled" : ""}>上一页</button>
+        <button type="button" class="btn btn--secondary" id="sm-c-next">下一页</button>
+      </div>
+    </div>
+    <div id="sm-p-pair" ${SM.tab === "coord" ? "hidden" : ""}>
+      <div class="toolbar" style="flex-wrap:wrap">
+        <div class="field" style="min-width:180px">
+          <span class="field-label">搜索起终点</span>
+          <input type="search" id="sm-pq" placeholder="模糊" value="${escapeHtml(SM.pQ)}" />
+        </div>
+        <button type="button" class="btn btn--secondary" id="sm-p-search">查询</button>
+        <button type="button" class="btn btn--secondary" id="sm-p-refresh">刷新</button>
+        <button type="button" class="btn btn--primary" id="sm-p-new">新增有向边</button>
+        <a class="btn btn--secondary" href="${API_BASE}/store-master/export" target="_blank" rel="noopener">导出 Excel</a>
+        <div class="field" style="min-width:200px">
+          <span class="field-label">导入</span>
+          <input type="file" id="sm-p-file" accept=".xlsx" />
+        </div>
+        <button type="button" class="btn btn--primary" id="sm-p-import">上传导入</button>
+        <span id="sm-pair-total" class="field-label" style="align-self:center"></span>
+      </div>
+      <div id="sm-pair-form" class="sm-form" hidden>
+        <div class="field"><span class="field-label">起点</span><input id="sm-pff" type="text" /></div>
+        <div class="field"><span class="field-label">终点</span><input id="sm-pft" type="text" /></div>
+        <div class="field"><span class="field-label">距离 km</span><input id="sm-pfd" type="number" step="any" min="0" /></div>
+        <div class="toolbar">
+          <button type="button" class="btn btn--primary" id="sm-p-save">保存</button>
+          <button type="button" class="btn btn--secondary" id="sm-p-cancel">取消</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="sm-pair-table">
+          <thead><tr><th>ID</th><th>起点</th><th>终点</th><th>距离(km)</th><th>操作</th></tr></thead>
+          <tbody id="sm-pair-tbody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn btn--secondary" id="sm-p-prev" ${SM.pSkip <= 0 ? "disabled" : ""}>上一页</button>
+        <button type="button" class="btn btn--secondary" id="sm-p-next">下一页</button>
+      </div>
+    </div>
+    <div id="sm-msg" style="margin-top:12px"></div>`;
+  smRefreshVisibility();
+  document.getElementById("sm-tab-coord")?.addEventListener("click", () => {
+    SM.tab = "coord";
+    smRefreshVisibility();
+    smLoadCoord();
+  });
+  document.getElementById("sm-tab-pair")?.addEventListener("click", () => {
+    SM.tab = "pair";
+    smRefreshVisibility();
+    smLoadPair();
+  });
+  document.getElementById("sm-c-search")?.addEventListener("click", () => {
+    SM.cQ = (document.getElementById("sm-cq")?.value || "").trim();
+    SM.cSkip = 0;
+    smLoadCoord();
+  });
+  document.getElementById("sm-c-refresh")?.addEventListener("click", () => {
+    smLoadCoord();
+  });
+  document.getElementById("sm-p-search")?.addEventListener("click", () => {
+    SM.pQ = (document.getElementById("sm-pq")?.value || "").trim();
+    SM.pSkip = 0;
+    smLoadPair();
+  });
+  document.getElementById("sm-p-refresh")?.addEventListener("click", () => {
+    smLoadPair();
+  });
+  document.getElementById("sm-c-new")?.addEventListener("click", () => {
+    SM.editCoordId = null;
+    document.getElementById("sm-cfn").value = "";
+    document.getElementById("sm-cfl").value = "";
+    document.getElementById("sm-cfa").value = "";
+    document.getElementById("sm-cfs").value = "";
+    document.getElementById("sm-coord-form").hidden = false;
+  });
+  document.getElementById("sm-c-cancel")?.addEventListener("click", () => {
+    document.getElementById("sm-coord-form").hidden = true;
+  });
+  document.getElementById("sm-c-save")?.addEventListener("click", async () => {
+    const body = {
+      store_name: (document.getElementById("sm-cfn")?.value || "").trim(),
+      longitude: parseFloat(document.getElementById("sm-cfl")?.value),
+      latitude: parseFloat(document.getElementById("sm-cfa")?.value),
+      data_source: (document.getElementById("sm-cfs")?.value || "").trim() || null,
+    };
+    if (!body.store_name || Number.isNaN(body.longitude) || Number.isNaN(body.latitude)) {
+      document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">请填写完整坐标</div>`;
+      return;
+    }
+    const url = SM.editCoordId
+      ? `${API_BASE}/store-coordinates/${SM.editCoordId}`
+      : `${API_BASE}/store-coordinates`;
+    const r = await fetch(url, {
+      method: SM.editCoordId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const em =
+        typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d || r.status);
+      document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">${escapeHtml(em)}</div>`;
+      return;
+    }
+    document.getElementById("sm-coord-form").hidden = true;
+    document.getElementById("sm-msg").innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">已保存</div>`;
+    smLoadCoord();
+  });
+  document.getElementById("sm-c-prev")?.addEventListener("click", () => {
+    if (SM.cSkip <= 0) return;
+    SM.cSkip = Math.max(0, SM.cSkip - SM.limit);
+    smLoadCoord();
+  });
+  document.getElementById("sm-c-next")?.addEventListener("click", () => {
+    SM.cSkip += SM.limit;
+    smLoadCoord();
+  });
+  document.getElementById("sm-p-new")?.addEventListener("click", () => {
+    SM.editPairId = null;
+    document.getElementById("sm-pff").value = "";
+    document.getElementById("sm-pft").value = "";
+    document.getElementById("sm-pfd").value = "";
+    document.getElementById("sm-pair-form").hidden = false;
+  });
+  document.getElementById("sm-p-cancel")?.addEventListener("click", () => {
+    document.getElementById("sm-pair-form").hidden = true;
+  });
+  document.getElementById("sm-p-save")?.addEventListener("click", async () => {
+    const body = {
+      store_from: (document.getElementById("sm-pff")?.value || "").trim(),
+      store_to: (document.getElementById("sm-pft")?.value || "").trim(),
+      distance_km: parseFloat(document.getElementById("sm-pfd")?.value),
+    };
+    if (!body.store_from || !body.store_to || Number.isNaN(body.distance_km)) {
+      document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">请填写起终点与距离</div>`;
+      return;
+    }
+    const url = SM.editPairId
+      ? `${API_BASE}/store-pair-distances/${SM.editPairId}`
+      : `${API_BASE}/store-pair-distances`;
+    const r = await fetch(url, {
+      method: SM.editPairId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">${escapeHtml(
+        (typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail)) || r.status,
+      )}</div>`;
+      return;
+    }
+    document.getElementById("sm-pair-form").hidden = true;
+    document.getElementById("sm-msg").innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">已保存</div>`;
+    smLoadPair();
+  });
+  document.getElementById("sm-p-prev")?.addEventListener("click", () => {
+    if (SM.pSkip <= 0) return;
+    SM.pSkip = Math.max(0, SM.pSkip - SM.limit);
+    smLoadPair();
+  });
+  document.getElementById("sm-p-next")?.addEventListener("click", () => {
+    SM.pSkip += SM.limit;
+    smLoadPair();
+  });
+  const doImport = async (file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    document.getElementById("sm-msg").innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
+    const r = await fetch(`${API_BASE}/store-master/import?data_source=页面导入`, { method: "POST", body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">${escapeHtml(
+        d.detail || String(r.status),
+      )}</div>`;
+      return;
+    }
+    document.getElementById("sm-msg").innerHTML = `<div class="code-block"><pre>${escapeHtml(
+      JSON.stringify(d, null, 2),
+    )}</pre></div>`;
+    smLoadCoord();
+    smLoadPair();
+  };
+  document.getElementById("sm-c-import")?.addEventListener("click", () => {
+    const f = document.getElementById("sm-c-file")?.files[0];
+    doImport(f);
+  });
+  document.getElementById("sm-p-import")?.addEventListener("click", () => {
+    const f = document.getElementById("sm-p-file")?.files[0];
+    doImport(f);
+  });
+  document.getElementById("sm-coord-table")?.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const id = t.getAttribute("data-id");
+    if (t.getAttribute("data-sm") === "ec" && id) {
+      SM.editCoordId = parseInt(id, 10);
+      const r = await fetch(`${API_BASE}/store-coordinates/${id}`);
+      const it = await r.json();
+      if (!r.ok) return;
+      document.getElementById("sm-cfn").value = it.store_name;
+      document.getElementById("sm-cfl").value = it.longitude;
+      document.getElementById("sm-cfa").value = it.latitude;
+      document.getElementById("sm-cfs").value = it.data_source || "";
+      document.getElementById("sm-coord-form").hidden = false;
+    }
+    if (t.getAttribute("data-sm") === "dc" && id) {
+      if (!window.confirm("确定删除该门店坐标？")) return;
+      const r2 = await fetch(`${API_BASE}/store-coordinates/${id}`, { method: "DELETE" });
+      if (r2.ok) {
+        smLoadCoord();
+      } else {
+        const x = await r2.json();
+        document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">${escapeHtml(
+          x.detail || "删除失败",
+        )}</div>`;
+      }
+    }
+  });
+  document.getElementById("sm-pair-table")?.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const id = t.getAttribute("data-id");
+    if (t.getAttribute("data-sm") === "ep" && id) {
+      SM.editPairId = parseInt(id, 10);
+      const r = await fetch(`${API_BASE}/store-pair-distances/${id}`);
+      const it = await r.json();
+      if (!r.ok) return;
+      document.getElementById("sm-pff").value = it.store_from;
+      document.getElementById("sm-pft").value = it.store_to;
+      document.getElementById("sm-pfd").value = it.distance_km;
+      document.getElementById("sm-pair-form").hidden = false;
+    }
+    if (t.getAttribute("data-sm") === "dp" && id) {
+      if (!window.confirm("确定删除该仓店距离？")) return;
+      const r2 = await fetch(`${API_BASE}/store-pair-distances/${id}`, { method: "DELETE" });
+      if (r2.ok) smLoadPair();
+    }
+  });
+  if (SM.tab === "coord") smLoadCoord();
+  else smLoadPair();
 }
 
 window.addEventListener("hashchange", route);

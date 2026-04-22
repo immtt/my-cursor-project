@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import date, datetime
 from io import BytesIO
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
@@ -49,7 +49,10 @@ def _append_template_instruction_sheet(wb: Workbook, dataset_type: str) -> None:
         "",
     ]
     if dataset_type == "system":
-        rows.append("【系统建议】还须填写：预计公里数、预计时效（暂无时可填 0）。")
+        rows.append(
+            "【系统建议】还须填写：预计公里数(km)、预计时效(分钟)（整数分钟；暂无时可填 0）。"
+        )
+        rows.append("请勿将米、秒等填入：里程仅保存为千米，时效仅保存为分钟。")
     else:
         rows.append("【手动排线】无需填写预计公里数、预计时效，比对前由系统自动补算。")
     for i, text in enumerate(rows, start=1):
@@ -75,8 +78,8 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 "车辆类型",
                 "配送体积",
                 "装载率",
-                "预计公里数",
-                "预计时效",
+                "预计公里数(km)",
+                "预计时效(分钟)",
             ]
         )
         ws.append(
@@ -209,23 +212,58 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
             errors.append({"row": row_no, "reason": str(exc)})
 
     batch_id = uuid.uuid4().hex[:16]
-    for route_date in touched_dates:
-        if dataset_type == "system":
-            db.query(SysSuggest).filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1).update(
-                {"is_active": 0}
-            )
-        else:
-            db.query(ManualRoute).filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1).update(
-                {"is_active": 0}
-            )
-
     imported_at = datetime.now()
+
     for obj in staged_records:
         obj.batch_id = batch_id
         obj.is_active = 1
         obj.import_operator = operator
         obj.imported_at = imported_at
-        db.add(obj)
+        if dataset_type == "system":
+            existing = (
+                db.query(SysSuggest)
+                .filter(SysSuggest.route_date == obj.route_date, SysSuggest.waybill_no == obj.waybill_no)
+                .first()
+            )
+            if existing:
+                existing.route_line = obj.route_line
+                existing.warehouse_name = obj.warehouse_name
+                existing.stores = obj.stores
+                existing.vehicle_type = obj.vehicle_type
+                existing.volume = obj.volume
+                existing.load_rate = obj.load_rate
+                existing.est_distance = obj.est_distance
+                existing.est_duration = obj.est_duration
+                existing.batch_id = batch_id
+                existing.import_operator = operator
+                existing.imported_at = imported_at
+                existing.is_active = 1
+            else:
+                db.add(obj)
+        else:
+            existing = (
+                db.query(ManualRoute)
+                .filter(ManualRoute.route_date == obj.route_date, ManualRoute.waybill_no == obj.waybill_no)
+                .first()
+            )
+            if existing:
+                existing.route_line = obj.route_line
+                existing.warehouse_name = obj.warehouse_name
+                existing.stores = obj.stores
+                existing.vehicle_type = obj.vehicle_type
+                existing.volume = obj.volume
+                existing.load_rate = obj.load_rate
+                existing.batch_id = batch_id
+                existing.import_operator = operator
+                existing.imported_at = imported_at
+                existing.is_active = 1
+                existing.calc_status = 0
+                existing.est_distance = None
+                existing.est_duration = None
+                existing.route_polyline = None
+                existing.delivery_store_order = None
+            else:
+                db.add(obj)
 
     for route_date in touched_dates:
         db.add(
@@ -347,6 +385,7 @@ def fetch_active_import_page(
     route_date_to: date,
     page: int,
     page_size: int,
+    warehouse_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """按排线日期闭区间分页查询当前有效行（is_active=1）；page_size 仅 20 或 50。"""
     if page_size not in (20, 50):
@@ -357,23 +396,40 @@ def fetch_active_import_page(
         raise ValueError("dataset_type must be system or manual")
     if route_date_from > route_date_to:
         raise ValueError("route_date_from must be <= route_date_to")
+    wh = (warehouse_name or "").strip()
     offset = (page - 1) * page_size
     if dataset_type == "system":
-        q = db.query(SysSuggest).filter(
+        base = db.query(SysSuggest).filter(
             SysSuggest.is_active == 1,
             SysSuggest.route_date >= route_date_from,
             SysSuggest.route_date <= route_date_to,
         )
+        opt_rows = base.with_entities(SysSuggest.warehouse_name).distinct().all()
+        warehouse_options = sorted({str(n[0]).strip() for n in opt_rows if n[0]})
+        q = base
+        if wh:
+            q = q.filter(SysSuggest.warehouse_name == wh)
         total = q.count()
         rows = q.order_by(SysSuggest.id).offset(offset).limit(page_size).all()
         items = [_suggest_row_dict(r) for r in rows]
     else:
-        q = db.query(ManualRoute).filter(
+        base = db.query(ManualRoute).filter(
             ManualRoute.is_active == 1,
             ManualRoute.route_date >= route_date_from,
             ManualRoute.route_date <= route_date_to,
         )
+        opt_rows = base.with_entities(ManualRoute.warehouse_name).distinct().all()
+        warehouse_options = sorted({str(n[0]).strip() for n in opt_rows if n[0]})
+        q = base
+        if wh:
+            q = q.filter(ManualRoute.warehouse_name == wh)
         total = q.count()
         rows = q.order_by(ManualRoute.id).offset(offset).limit(page_size).all()
         items = [_manual_row_dict(r) for r in rows]
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "warehouse_options": warehouse_options,
+    }

@@ -1,19 +1,23 @@
-from sqlalchemy import func
+from typing import Dict, List, Optional, Tuple
+
 from sqlalchemy.orm import Session
 
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
 from app.utils.store_match import calc_store_match_rate
 
 
-def _match_status(rate: float, threshold: float) -> str:
+def _match_status(rate: float) -> str:
+    """PRD 3.1.2：完全匹配=100%；部分匹配=0<匹配度<100%；不匹配=0%。不使用业务阈值分档。"""
     if rate >= 0.999:
         return "full"
-    if rate >= threshold:
+    if rate > 0:
         return "partial"
     return "none"
 
 
 def run_compare(db: Session, route_date, threshold: float = 0.5):
+    """threshold 仅保留 API 兼容；匹配度与状态分档遵循 PRD，不再使用该阈值。"""
+    _ = threshold
     db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1).all()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1).all()
@@ -62,7 +66,7 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             inserted += 1
             continue
 
-        status = _match_status(best_rate, threshold)
+        status = _match_status(best_rate)
         volume_diff = None
         if best.volume != 0:
             volume_diff = round(sys_row.volume - best.volume, 2)
@@ -110,23 +114,82 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
     return inserted
 
 
-def overview(db: Session, route_date):
-    q = db.query(CompareResult).filter(CompareResult.route_date == route_date)
-    rows = q.all()
+def warehouse_options_for_route_date(db: Session, route_date) -> List[str]:
+    sys_names = [
+        str(n).strip()
+        for (n,) in db.query(SysSuggest.warehouse_name)
+        .filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1)
+        .distinct()
+        .all()
+        if n
+    ]
+    man_names = [
+        str(n).strip()
+        for (n,) in db.query(ManualRoute.warehouse_name)
+        .filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1)
+        .distinct()
+        .all()
+        if n
+    ]
+    return sorted(set(sys_names) | set(man_names))
+
+
+def _side_maps_for_compare_rows(db: Session, rows: List[CompareResult]) -> Tuple[Dict[int, SysSuggest], Dict[int, ManualRoute]]:
+    sys_ids = [r.sys_id for r in rows if r.sys_id is not None]
+    man_ids = [r.manual_id for r in rows if r.manual_id is not None]
+    sys_map: Dict[int, SysSuggest] = {}
+    if sys_ids:
+        for s in db.query(SysSuggest).filter(SysSuggest.id.in_(sys_ids)).all():
+            sys_map[s.id] = s
+    man_map: Dict[int, ManualRoute] = {}
+    if man_ids:
+        for m in db.query(ManualRoute).filter(ManualRoute.id.in_(man_ids)).all():
+            man_map[m.id] = m
+    return sys_map, man_map
+
+
+def compare_row_matches_warehouse(
+    row: CompareResult,
+    sys_map: Dict[int, SysSuggest],
+    man_map: Dict[int, ManualRoute],
+    warehouse_name: str,
+) -> bool:
+    wh = (warehouse_name or "").strip()
+    if not wh:
+        return True
+    sys_row = sys_map.get(row.sys_id) if row.sys_id is not None else None
+    man_row = man_map.get(row.manual_id) if row.manual_id is not None else None
+    s = (sys_row.warehouse_name or "").strip() if sys_row else ""
+    m = (man_row.warehouse_name or "").strip() if man_row else ""
+    return s == wh or m == wh
+
+
+def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
+    wh = (warehouse_name or "").strip()
+    all_rows = db.query(CompareResult).filter(CompareResult.route_date == route_date).all()
+    sys_map, man_map = _side_maps_for_compare_rows(db, all_rows)
+    rows = all_rows
+    if wh:
+        rows = [r for r in all_rows if compare_row_matches_warehouse(r, sys_map, man_map, wh)]
     total = len(rows)
-    full_count = len([r for r in rows if r.match_status == "full"])
-    partial_count = len([r for r in rows if r.match_status == "partial"])
-    none_count = len([r for r in rows if r.match_status == "none"])
-    avg_volume = q.with_entities(func.avg(CompareResult.volume_diff)).scalar()
-    avg_dist = q.with_entities(func.avg(CompareResult.est_distance_diff)).scalar()
-    avg_dur = q.with_entities(func.avg(CompareResult.est_duration_diff)).scalar()
+    full_count = sum(1 for r in rows if r.match_status == "full")
+    partial_count = sum(1 for r in rows if r.match_status == "partial")
+    none_count = sum(1 for r in rows if r.match_status == "none")
+    vols = [r.volume_diff for r in rows if r.volume_diff is not None]
+    avg_volume = round(sum(vols) / len(vols), 2) if vols else 0.0
+    dists = [r.est_distance_diff for r in rows if r.est_distance_diff is not None]
+    avg_dist = round(sum(dists) / len(dists), 2) if dists else 0.0
+    durs = [float(r.est_duration_diff) for r in rows if r.est_duration_diff is not None]
+    avg_dur = round(sum(durs) / len(durs), 2) if durs else 0.0
+    opts = warehouse_options_for_route_date(db, route_date)
     return {
         "route_date": route_date,
         "total": total,
         "full_count": full_count,
         "partial_count": partial_count,
         "none_count": none_count,
-        "avg_volume_diff": round(avg_volume or 0, 2),
-        "avg_distance_diff": round(avg_dist or 0, 2),
-        "avg_duration_diff": round(avg_dur or 0, 2),
+        "avg_volume_diff": avg_volume,
+        "avg_distance_diff": avg_dist,
+        "avg_duration_diff": avg_dur,
+        "warehouse_options": opts,
     }

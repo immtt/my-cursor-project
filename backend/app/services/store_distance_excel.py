@@ -1,39 +1,15 @@
-#!/usr/bin/env python3
-"""从「仓店距离」类 Excel 导入 store_pair_distance 与 store_coordinate。
-
-表头（每 sheet 第一行）：客户1 | 客户1坐标 | 客户2 | 客户2坐标 | 距离（km）
-坐标格式：经度,纬度（如 117.152152,31.716447）
-
-读取 backend/.env 的 DATABASE_URL；并执行 create_all 以创建新表。
-
-用法：
-  python3 scripts/import_store_distances.py /path/to/仓店距离.xlsx
-"""
+"""仓店距离 Excel：与 scripts/import_store_distances.py 表头一致；供 API 导入/导出。"""
 from __future__ import annotations
 
-import argparse
-import os
 import re
-import sys
+from io import BytesIO
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-ROOT = Path(__file__).resolve().parent.parent
-BACKEND = ROOT / "backend"
-sys.path.insert(0, str(BACKEND))
-
-from dotenv import load_dotenv
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
-load_dotenv(BACKEND / ".env")
-
-from app.db.session import SessionLocal, engine  # noqa: E402
-from app.models.entities import Base, StoreCoordinate, StorePairDistance  # noqa: E402
-
-# 确保新表存在
-import app.models.entities  # noqa: F401, E402
-
-Base.metadata.create_all(bind=engine)
+from app.models.entities import StoreCoordinate, StorePairDistance
 
 HEADER_C1 = "客户1"
 HEADER_C1_COORD = "客户1坐标"
@@ -45,11 +21,10 @@ HEADER_DIST = "距离（km）"
 def _norm_cell(v) -> str:
     if v is None:
         return ""
-    s = str(v).strip()
-    return s
+    return str(v).strip()
 
 
-def parse_lng_lat(raw: str) -> tuple[float, float] | None:
+def parse_lng_lat(raw: str) -> Optional[Tuple[float, float]]:
     s = _norm_cell(raw)
     if not s:
         return None
@@ -68,7 +43,7 @@ def parse_lng_lat(raw: str) -> tuple[float, float] | None:
     return lng, lat
 
 
-def parse_distance_km(raw) -> float | None:
+def parse_distance_km(raw) -> Optional[float]:
     s = _norm_cell(raw)
     if not s:
         return None
@@ -120,10 +95,10 @@ def upsert_store_pair_distance(db: Session, store_from: str, store_to: str, dist
         )
 
 
-def import_workbook(path: Path, data_source_label: str) -> dict:
+def import_workbook_path(db: Session, path: str, data_source_label: str) -> Dict[str, Any]:
+    """从 xlsx 路径导入；按 sheet 提交，与 CLI 脚本行为一致。"""
     wb = load_workbook(path, read_only=True, data_only=True)
-    stats = {"sheets": 0, "distance_rows": 0, "stores_updated": 0, "skipped_rows": 0}
-    db = SessionLocal()
+    stats = {"sheets": 0, "distance_rows": 0, "skipped_rows": 0}
     try:
         for sheet_name in wb.sheetnames:
             stats["sheets"] += 1
@@ -140,12 +115,12 @@ def import_workbook(path: Path, data_source_label: str) -> dict:
                 i2c = header.index(HEADER_C2_COORD)
                 idist = header.index(HEADER_DIST)
             except ValueError:
-                print(f"[skip] sheet {sheet_name!r}: 表头不匹配", file=sys.stderr)
                 continue
 
             for row in rows_iter:
                 if not row:
                     continue
+
                 def cell(idx: int):
                     return row[idx] if idx < len(row) else None
 
@@ -161,42 +136,49 @@ def import_workbook(path: Path, data_source_label: str) -> dict:
 
                 upsert_store_coord(db, n1, coord1[0], coord1[1], data_source_label)
                 upsert_store_coord(db, n2, coord2[0], coord2[1], data_source_label)
-
                 upsert_store_pair_distance(db, n1, n2, dist)
                 stats["distance_rows"] += 1
 
             db.commit()
-
-        # count distinct stores touched (approximate: query count)
-        stats["stores_updated"] = db.query(StoreCoordinate).count()
-        return stats
     finally:
-        db.close()
         wb.close()
+    return stats
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="导入仓店距离 Excel")
-    ap.add_argument(
-        "xlsx",
-        nargs="?",
-        default=str(Path.home() / "Downloads" / "仓店距离.xlsx"),
-        help="xlsx 路径（默认 ~/Downloads/仓店距离.xlsx）",
+def _coord_str(db: Session, name: str) -> str:
+    r = db.query(StoreCoordinate).filter(StoreCoordinate.store_name == name).first()
+    if not r:
+        return ""
+    return f"{r.longitude},{r.latitude}"
+
+
+def build_export_xlsx_bytes(db: Session) -> bytes:
+    """两表：仓店距离（可再导入格式）、门店坐标简表。"""
+    wb = Workbook()
+    # Sheet1: 与导入一致
+    ws1 = wb.active
+    ws1.title = "仓店距离"
+    ws1.append(
+        [HEADER_C1, HEADER_C1_COORD, HEADER_C2, HEADER_C2_COORD, HEADER_DIST]
     )
-    ap.add_argument(
-        "--source-label",
-        default="仓店距离.xlsx",
-        help="写入 store_coordinate.data_source 的标记",
+    pairs: List[StorePairDistance] = (
+        db.query(StorePairDistance).order_by(StorePairDistance.id).all()
     )
-    args = ap.parse_args()
-    path = Path(os.path.expanduser(args.xlsx)).resolve()
-    if not path.is_file():
-        print(f"文件不存在: {path}", file=sys.stderr)
-        sys.exit(1)
-    out = import_workbook(path, args.source_label)
-    print("导入完成:", out)
-    print("DATABASE_URL:", engine.url.render_as_string(hide_password=True))
+    for p in pairs:
+        c1 = _coord_str(db, p.store_from)
+        c2 = _coord_str(db, p.store_to)
+        ws1.append(
+            [p.store_from, c1, p.store_to, c2, p.distance_km]
+        )
+    # Sheet2: 门店坐标
+    ws2 = wb.create_sheet("门店坐标")
+    ws2.append(["门店名称", "经度", "纬度", "数据来源"])
+    coords: List[StoreCoordinate] = (
+        db.query(StoreCoordinate).order_by(StoreCoordinate.id).all()
+    )
+    for c in coords:
+        ws2.append([c.store_name, c.longitude, c.latitude, c.data_source or ""])
 
-
-if __name__ == "__main__":
-    main()
+    bio = BytesIO()
+    wb.save(bio)
+    return bio.getvalue()

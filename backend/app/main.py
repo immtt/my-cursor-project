@@ -1,10 +1,12 @@
 from datetime import date
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.routes import router
 from app.db.session import Base, engine, ensure_sqlite_schema, get_db
+import app.models.entities  # noqa: F401  — 全量注册 ORM 表（含新表）供 create_all
 from app.middleware.dev_cors import DevCorsASGIMiddleware
 from app.services.import_service import fetch_active_import_page, fetch_import_batch_page
 
@@ -41,6 +43,7 @@ def api_import_active(
     route_date_to: date = Query(..., description="排线日期止 YYYY-MM-DD（含）"),
     page: int = Query(1, description="页码，从 1 起"),
     page_size: int = Query(20, description="每页条数，仅 20 或 50"),
+    warehouse_name: Optional[str] = Query(None, description="始发仓库，精确匹配；不传表示全部"),
     db: Session = Depends(get_db),
 ):
     if dataset_type not in {"system", "manual"}:
@@ -48,7 +51,9 @@ def api_import_active(
     if page_size not in (20, 50):
         raise HTTPException(status_code=400, detail="page_size must be 20 or 50")
     try:
-        return fetch_active_import_page(db, dataset_type, route_date_from, route_date_to, page, page_size)
+        return fetch_active_import_page(
+            db, dataset_type, route_date_from, route_date_to, page, page_size, warehouse_name
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

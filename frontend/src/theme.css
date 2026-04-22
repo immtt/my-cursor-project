@@ -247,6 +247,26 @@ body {
   color: var(--text-secondary);
 }
 
+.page-head--compact {
+  margin-bottom: 8px;
+}
+
+.page-head--compact p {
+  line-height: 1.45;
+}
+
+.compare-run-status {
+  min-height: 0;
+}
+
+.compare-run-status:not(:empty) {
+  margin-bottom: 10px;
+}
+
+.compare-run-status:empty {
+  display: none;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -255,6 +275,123 @@ body {
   margin-bottom: 24px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
+}
+
+.toolbar.toolbar--compare {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+}
+
+.toolbar.toolbar--import {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+}
+
+.import-message-area:not(:empty) {
+  margin-bottom: 14px;
+}
+
+.import-message-area .code-block {
+  margin-top: 10px;
+}
+
+/* 导入弹窗 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal.modal--open {
+  display: flex;
+}
+
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  cursor: pointer;
+}
+
+.modal__dialog {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 440px;
+  max-height: min(90vh, 560px);
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18), var(--shadow);
+  padding: 24px 24px 20px;
+  border: 1px solid var(--border);
+}
+
+.modal__dialog--xl {
+  max-width: min(920px, 96vw);
+  max-height: min(90vh, 720px);
+}
+
+.cp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+
+.field--cp .cp-input {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .cp-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.modal__title {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.modal__subtitle {
+  margin: 0 0 18px;
+  font-size: 0.85rem;
+}
+
+.field--modal-file {
+  margin-bottom: 12px;
+}
+
+.import-modal-inline-msg:not([hidden]) {
+  margin-bottom: 16px;
+}
+
+.import-modal-inline-msg .alert {
+  margin: 0;
+}
+
+.modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.modal__actions .btn {
+  margin-top: 0;
 }
 
 .field {
@@ -333,6 +470,13 @@ select:focus {
   border-color: #cbd2e0;
 }
 
+.btn--sm {
+  padding: 4px 10px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  gap: 4px;
+}
+
 .btn--map {
   padding: 6px 12px;
   font-size: 0.8rem;
@@ -404,6 +548,67 @@ select:focus {
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+}
+
+.data-table td.cell-stores {
+  max-width: 12rem;
+  word-break: break-word;
+  white-space: normal;
+  vertical-align: top;
+  line-height: 1.35;
+}
+
+/* 线路差异表：同列展示系统/手工运单，标签与数据同一行起排（长文本在标签右侧换行，不压高首行） */
+.data-table td.cell-waybills {
+  vertical-align: top;
+  min-width: 10rem;
+}
+
+.waybill-line {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 6px 8px;
+  line-height: 1.25;
+}
+
+.waybill-line + .waybill-line {
+  margin-top: 4px;
+}
+
+.waybill-tag {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.waybill-tag--system {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.waybill-tag--manual {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.waybill-no {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+/* 不同门店：与运单列同结构，可略宽以容纳多店名 */
+.data-table td.cell-diff-stores {
+  min-width: 10rem;
 }
 
 .data-table {
@@ -491,6 +696,99 @@ select:focus {
   color: var(--text-secondary);
 }
 
+.map-layout .route-map-stops-wrap {
+  margin-bottom: 16px;
+}
+
+.map-layout .route-map-stops-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 860px) {
+  .map-layout .route-map-stops-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.map-layout .route-map-wb-section {
+  padding: 12px 16px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.map-layout .route-map-wb-head {
+  margin-bottom: 6px;
+}
+
+.map-layout .route-map-wb-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.map-layout .route-map-wb-no {
+  font-size: 0.85rem;
+}
+
+.map-layout .route-map-sub {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.map-layout .route-map-stop-ol {
+  margin: 0;
+  padding-left: 1.35rem;
+}
+
+.map-layout .route-map-stop-ol li {
+  margin: 5px 0;
+  line-height: 1.45;
+}
+
+.map-layout .route-map-seq {
+  display: inline-block;
+  min-width: 1.6em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.map-layout .route-map-kind {
+  display: inline-block;
+  margin: 0 6px 0 4px;
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.map-layout .route-map-kind--wh {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.map-layout .route-map-kind--st {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.map-layout .route-map-nm {
+  font-weight: 500;
+}
+
+.map-layout .route-map-ll {
+  font-weight: 400;
+  font-size: 0.8em;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .map-layout #mapContainer {
   height: 520px;
   width: 100%;
@@ -531,6 +829,43 @@ select:focus {
   text-decoration: underline;
 }
 
+/* 仓店距离管理：子页签 */
+.subnav-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.subnav-tabs .subnav-tab {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.subnav-tabs .subnav-tab.is-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+.sm-form {
+  margin-top: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fafbfc;
+}
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* 窄屏仍保持左右栏，仅压缩侧栏与内边距（避免出现「菜单跑到上面」） */
 @media (max-width: 900px) {
   .sidebar {
@@ -568,4 +903,23 @@ select:focus {
     margin-top: 0;
     width: 100%;
   }
+}
+
+/* 差异分析：一店多车运单与项次（表内列表框式区域） */
+.diff-wb-list {
+  margin: 0;
+  padding: 6px 8px 6px 22px;
+  max-width: 28rem;
+  max-height: 8.5rem;
+  overflow: auto;
+  list-style: disc;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.diff-wb-list code {
+  font-size: 0.88em;
 }

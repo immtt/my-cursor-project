@@ -101,7 +101,7 @@ def _create_system_excel_three_dates(path: str):
     wb.save(path)
 
 
-def test_import_cover_marks_old_batch_inactive(db_session):
+def test_import_upserts_same_waybill_and_route_date(db_session):
     file_a = os.path.join(tempfile.gettempdir(), "sys_a.xlsx")
     file_b = os.path.join(tempfile.gettempdir(), "sys_b.xlsx")
     _create_system_excel(file_a, 8.0)
@@ -112,10 +112,8 @@ def test_import_cover_marks_old_batch_inactive(db_session):
 
     rows = db_session.query(SysSuggest).filter(SysSuggest.route_date == date(2026, 4, 20)).all()
     active_rows = [r for r in rows if r.is_active == 1]
-    inactive_rows = [r for r in rows if r.is_active == 0]
-    assert len(rows) == 2
+    assert len(rows) == 1
     assert len(active_rows) == 1
-    assert len(inactive_rows) == 1
     assert active_rows[0].volume == 9.0
 
 
@@ -167,6 +165,28 @@ def test_api_import_batch_rejects_bad_page_size():
     assert r.status_code == 400
 
 
+def _create_system_excel_two_warehouses_same_date(path: str):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(["2026-04-20", "W1", "线路A", "华东仓", "门店甲", "4.2米标箱", 1.0, "70%", 30, 60])
+    ws.append(["2026-04-20", "W2", "线路A", "华北仓", "门店甲", "4.2米标箱", 2.0, "70%", 30, 60])
+    wb.save(path)
+
+
 def test_fetch_active_import_page_filters_by_route_date(db_session):
     path = os.path.join(tempfile.gettempdir(), "sys_dates.xlsx")
     _create_system_excel_three_dates(path)
@@ -185,6 +205,27 @@ def test_fetch_active_import_page_filters_by_route_date(db_session):
         db_session, "system", date(2026, 4, 1), date(2026, 4, 30), 1, 50
     )
     assert full["total"] == 3
+
+
+def test_fetch_active_import_page_filters_by_warehouse_and_lists_options(db_session):
+    path = os.path.join(tempfile.gettempdir(), "sys_two_wh.xlsx")
+    _create_system_excel_two_warehouses_same_date(path)
+    import_excel(db_session, "system", path, operator="t")
+    full = fetch_active_import_page(
+        db_session, "system", date(2026, 4, 1), date(2026, 4, 30), 1, 20
+    )
+    assert set(full["warehouse_options"]) == {"华东仓", "华北仓"}
+    east = fetch_active_import_page(
+        db_session,
+        "system",
+        date(2026, 4, 1),
+        date(2026, 4, 30),
+        1,
+        20,
+        warehouse_name="华东仓",
+    )
+    assert east["total"] == 1
+    assert east["items"][0]["waybill_no"] == "W1"
 
 
 def test_fetch_active_import_page_rejects_inverted_range(db_session):
@@ -257,7 +298,19 @@ def test_api_manual_backfill_unknown_batch_returns_zero():
     assert data["failures"] == []
 
 
-def test_api_manual_backfill_rejects_blank_batch_id():
+def test_api_manual_backfill_rejects_neither_batch_nor_range():
     client = TestClient(app)
-    r = client.post("/api/manual/backfill", json={"batch_id": "   "})
-    assert r.status_code == 400
+    r = client.post("/api/manual/backfill", json={})
+    assert r.status_code == 422
+
+
+def test_api_manual_backfill_by_date_range_updates_zero_when_empty():
+    client = TestClient(app)
+    r = client.post(
+        "/api/manual/backfill",
+        json={"route_date_from": "2099-01-01", "route_date_to": "2099-01-31"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["updated"] == 0
+    assert data["failed"] == 0

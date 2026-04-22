@@ -91,7 +91,7 @@ def main() -> None:
                           MODIFY COLUMN id int NOT NULL AUTO_INCREMENT COMMENT '主键',
                           MODIFY COLUMN store_from varchar(300) NOT NULL COMMENT '起点门店（对应表头「客户1」）',
                           MODIFY COLUMN store_to varchar(300) NOT NULL COMMENT '终点门店（对应表头「客户2」）',
-                          MODIFY COLUMN distance_km double NOT NULL COMMENT '店间距离（千米）',
+                          MODIFY COLUMN distance_km double NOT NULL COMMENT '仓店距离（千米）',
                           MODIFY COLUMN created_at datetime NULL COMMENT '创建时间'
                         """
                     )

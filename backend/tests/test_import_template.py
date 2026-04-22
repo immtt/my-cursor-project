@@ -23,8 +23,8 @@ def test_build_import_template_system_columns():
         "车辆类型",
         "配送体积",
         "装载率",
-        "预计公里数",
-        "预计时效",
+        "预计公里数(km)",
+        "预计时效(分钟)",
     ]
     assert ws.max_row >= 2
     assert wb.sheetnames[0] == "导入数据"

@@ -2,6 +2,7 @@ from datetime import date
 
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
 from app.services.compare_service import run_compare
+from app.services.gaode_service import encode_route_polyline
 from app.services.route_map_service import build_route_map_payload
 
 
@@ -31,6 +32,8 @@ def test_route_map_payload_paired(db_session):
             est_distance=42,
             est_duration=85,
             calc_status=1,
+            route_polyline=encode_route_polyline([[100.0, 20.0], [100.1, 20.1], [100.2, 20.2]]),
+            delivery_store_order='["门店甲","门店乙"]',
         )
     )
     db_session.commit()
@@ -46,6 +49,13 @@ def test_route_map_payload_paired(db_session):
     assert payload["manual"]["available"] is True
     assert len(payload["system"]["path"]) >= 4
     assert payload["system"]["markers"][0]["kind"] == "warehouse"
+    assert [m["name"] for m in payload["manual"]["markers"][1:]] == ["门店甲", "门店乙"]
+    assert [m["seq"] for m in payload["manual"]["markers"]] == [0, 1, 2]
+    assert payload["manual"]["visit_order"] == ["门店甲", "门店乙"]
+    assert payload["system"]["visit_order"] == ["门店甲", "门店乙"]
+    assert payload["store_match_rate"] == 100.0
+    assert payload["sys_volume"] == 9.0
+    assert payload["manual_volume"] == 10.0
 
 
 def test_route_map_manual_only_row(db_session):
