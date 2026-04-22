@@ -27,6 +27,10 @@ def test_build_import_template_system_columns():
         "预计时效",
     ]
     assert ws.max_row >= 2
+    assert wb.sheetnames[0] == "导入数据"
+    assert wb.sheetnames[1] == "填写说明"
+    hint = wb["填写说明"].cell(row=6, column=1).value or ""
+    assert "车辆类型" in hint
 
 
 def test_build_import_template_manual_columns():
@@ -37,6 +41,8 @@ def test_build_import_template_manual_columns():
     assert "预计公里数" not in headers
     assert "预计时效" not in headers
     assert "配送体积" in headers
+    assert "车辆类型" in headers
+    assert wb.sheetnames[1] == "填写说明"
 
 
 def test_build_import_template_invalid_type():

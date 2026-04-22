@@ -17,6 +17,11 @@
 - `multipart/form-data`: `file`
 - Header: `x-operator`（可选，默认 system）
 
+**标准模板下载**（与导入列一致，含「导入数据」「填写说明」两个工作表）：
+
+- `GET /api/import-template?dataset_type=system|manual`
+- 必填列含：**车辆类型**（如 4.2米标箱 / 4.2米高栏）；系统建议另含预计公里数、预计时效。
+
 返回：
 
 ```json

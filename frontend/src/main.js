@@ -141,6 +141,7 @@ function renderImport() {
   app.innerHTML = `
     <div class="page-head">
       <p>同一排线日期与数据类型会执行覆盖导入，历史批次自动失效。</p>
+      <p>「导出Excel」模板含<strong>车辆类型</strong>等必填列及「填写说明」页，请按表头顺序填写（系统与手工可填不同车型，如标箱与高栏）。</p>
     </div>
     <div class="toolbar">
       <div class="field">

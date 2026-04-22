@@ -35,8 +35,28 @@ def _normalize_header_label(raw: str) -> str:
     return s
 
 
+def _append_template_instruction_sheet(wb: Workbook, dataset_type: str) -> None:
+    """第二页「填写说明」：与导入校验一致，避免仅看表头遗漏「车辆类型」等必填项。"""
+    ws = wb.create_sheet("填写说明", 1)
+    rows = [
+        "导入时请使用「导入数据」工作表；第一行为表头，第二行为示例，自第三行起填写业务数据。",
+        "",
+        "必填列顺序须与表头一致：",
+        "排线日期、运单号、归属线路、始发仓库、拼载门店、车辆类型、配送体积、装载率。",
+        "",
+        "【车辆类型】必填。示例：4.2米标箱、4.2米高栏。系统建议与手工排线可填不同车型，便于比对。",
+        "",
+    ]
+    if dataset_type == "system":
+        rows.append("【系统建议】还须填写：预计公里数、预计时效（暂无时可填 0）。")
+    else:
+        rows.append("【手动排线】无需填写预计公里数、预计时效，比对前由系统自动补算。")
+    for i, text in enumerate(rows, start=1):
+        ws.cell(row=i, column=1, value=text)
+
+
 def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
-    """生成与导入规则一致的标准 Excel 模板（含表头 + 一行示例）。"""
+    """生成与导入规则一致的标准 Excel 模板（含表头 + 一行示例 + 填写说明页）。"""
     if dataset_type not in {"system", "manual"}:
         raise ValueError("dataset_type must be system or manual")
     wb = Workbook()
@@ -98,6 +118,7 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 75,
             ]
         )
+    _append_template_instruction_sheet(wb, dataset_type)
     bio = BytesIO()
     wb.save(bio)
     return bio.getvalue(), filename
