@@ -28,6 +28,3 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-
-# 高德 Web Key（勿提交）
-frontend/amap-config.local.js

@@ -144,8 +144,7 @@ function renderRouteMap() {
   const rid = routeMapIdFromHash();
   app.innerHTML = `
     <h2>路线地图</h2>
-    <p style="font-size:13px;color:#555">默认读取 <code>frontend/amap-config.local.js</code>（见 <code>amap-config.example.js</code>）。
-      也可在控制台设置 <code>localStorage.amap_web_key</code> / <code>amap_security_js_code</code> 覆盖。</p>
+    <p style="font-size:13px;color:#555">高德 Key 由 <code>frontend/amap-config.js</code> 提供；可用 <code>localStorage.amap_web_key</code> / <code>amap_security_js_code</code> 覆盖。</p>
     <p id="routeMapMeta"></p>
     <div id="mapContainer"></div>
     <p id="routeMapErr" style="color:#c00;"></p>
@@ -186,7 +185,7 @@ function renderRouteMap() {
       "";
     if (!key) {
       errEl.textContent =
-        "未检测到地图 Key（请配置 frontend/amap-config.local.js 或 localStorage.amap_web_key），已仅在下方展示路径点数。";
+        "未检测到地图 Key（请确认已加载 frontend/amap-config.js 或设置 localStorage.amap_web_key），已仅在下方展示路径点数。";
       const pre = document.createElement("pre");
       pre.style.fontSize = "12px";
       pre.textContent = JSON.stringify(

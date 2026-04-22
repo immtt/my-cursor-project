@@ -29,7 +29,7 @@
    - 顶部导航可切换：数据导入、比对、结果等。  
    - 路线地图：先在「比对结果」里查询出表格，再点某一行的 **「地图」**。
 
-4. 地图轨迹：确认本机已有 `frontend/amap-config.local.js`（含高德 Web Key 与安全密钥），保存后 **强制刷新** 页面（Cmd+Shift+R / Ctrl+Shift+R）。
+4. 地图轨迹：Key 与安全密钥在 `frontend/amap-config.js`；修改后 **强制刷新**（Cmd+Shift+R / Ctrl+Shift+R）。
 
 ## 启动方式
 
@@ -59,9 +59,8 @@ python3 -m http.server 5173
 
 - 页面入口：`http://127.0.0.1:5173`
 
-比对结果页「地图」使用高德 JS API 2.0。将 `frontend/amap-config.example.js` 复制为  
-`frontend/amap-config.local.js` 并填入 **Web 端 Key** 与 **安全密钥**（`index.html` 已优先加载该文件；`amap-config.local.js` 已加入 `.gitignore` 勿提交）。  
-也可在浏览器用 `localStorage.amap_web_key` / `localStorage.amap_security_js_code` 临时覆盖。
+比对结果页「地图」使用高德 JS API 2.0，Key 与安全密钥见 `frontend/amap-config.js`（`index.html` 已引用）。  
+也可用浏览器 `localStorage.amap_web_key` / `localStorage.amap_security_js_code` 临时覆盖。
 
 ## Git 分支规范
 
