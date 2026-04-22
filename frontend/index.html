@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>供应链非正式行为 · 智能排线</title>
+    <title>供应链非正式行为</title>
     <link rel="stylesheet" href="./src/theme.css" />
   </head>
   <body>
@@ -11,23 +11,25 @@
       <aside class="sidebar" aria-label="主导航">
         <div class="sidebar__brand">
           <div class="sidebar__brand-title">供应链非正式行为</div>
-          <div class="sidebar__brand-sub">智能排线 · MVP</div>
         </div>
-        <nav>
-          <ul class="sidebar-nav" id="main-nav">
-            <li>
-              <a class="sidebar-nav__link nav-tab" href="#import" data-route="#import">数据导入</a>
-            </li>
-            <li>
-              <a class="sidebar-nav__link nav-tab" href="#data" data-route="#data">数据管理</a>
-            </li>
-            <li>
-              <a class="sidebar-nav__link nav-tab" href="#compare" data-route="#compare">数据比对</a>
-            </li>
-            <li>
-              <a class="sidebar-nav__link nav-tab" href="#result" data-route="#result">比对结果</a>
-            </li>
-          </ul>
+        <nav class="sidebar-nav-wrap" aria-label="功能菜单">
+          <div class="nav-group" aria-labelledby="nav-l1-smartline">
+            <h2 id="nav-l1-smartline" class="nav-group__title">智能排线</h2>
+            <ul class="sidebar-nav sidebar-nav--level2" id="main-nav">
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#import" data-route="#import">数据导入</a>
+              </li>
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#data" data-route="#data">数据管理</a>
+              </li>
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#compare" data-route="#compare">数据比对</a>
+              </li>
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#result" data-route="#result">比对结果</a>
+              </li>
+            </ul>
+          </div>
         </nav>
       </aside>
       <div class="app-main">
