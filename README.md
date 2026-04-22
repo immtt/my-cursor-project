@@ -71,6 +71,18 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 - 健康检查：`http://127.0.0.1:8080/health`
 - API文档：`http://127.0.0.1:8080/docs`
 
+### 本地数据库怎么配（与后端用同一个库）
+
+后端读取环境变量 **`DATABASE_URL`**（SQLAlchemy 连接串）；**不设置时**默认使用 **`backend/smart_route.db`**（在 `backend` 目录下启动 uvicorn 时即该路径下的 SQLite 文件）。
+
+| 方式 | 说明 |
+|------|------|
+| **默认 SQLite（适合本机开发）** | 用 DBeaver、TablePlus、VS Code SQLite 插件等 **直接打开文件**：`…/智能排线项目/backend/smart_route.db`，与接口读写的是同一份数据。 |
+| **换成本机其它 SQLite 路径** | 启动前：`export DATABASE_URL="sqlite:////绝对路径/你的库.db"`（**4 个斜杠** 后接绝对路径）。改完需 **重启后端**。 |
+| **本机 MySQL** | 按 **`docs/schema.sql`** 与 **`docs/V1.2_数据库变更清单.md`** 建库表；`pip install pymysql`；示例：`export DATABASE_URL="mysql+pymysql://用户:密码@127.0.0.1:3306/库名"`。非 SQLite 时不会跑 SQLite 专用的自动补列逻辑，以你执行的 DDL 为准。 |
+
+可选：`export GAODE_MOCK_ENABLED=false` 等见 `backend/app/core/config.py`。
+
 ### 前端（静态页面）
 
 ```bash
