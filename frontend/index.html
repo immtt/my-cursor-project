@@ -3,28 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>智能排线项目</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 24px; }
-      nav a { margin-right: 12px; }
-      .card { border: 1px solid #ddd; padding: 16px; margin-top: 12px; border-radius: 8px; }
-      input, select, button { margin: 4px 0; padding: 6px; }
-      table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-      th, td { border: 1px solid #ddd; padding: 8px; }
-      #mapContainer { height: 480px; width: 100%; border: 1px solid #ccc; border-radius: 8px; }
-      .map-btn { cursor: pointer; }
-    </style>
+    <title>智能排线 · 数据比对</title>
+    <link rel="stylesheet" href="./src/theme.css" />
   </head>
   <body>
-    <h1>智能排线项目（MVP）</h1>
-    <nav>
-      <a href="#import">数据导入</a>
-      <a href="#data">数据管理</a>
-      <a href="#compare">数据比对</a>
-      <a href="#result">比对结果</a>
-    </nav>
-    <div id="app" class="card"></div>
+    <div class="app-frame">
+      <header class="app-header">
+        <h1 class="app-header__title">智能排线</h1>
+        <p class="app-header__sub">导入 · 比对 · 结果与路线地图（MVP）</p>
+      </header>
+      <nav>
+        <ul class="nav-tabs" id="main-nav">
+          <li><a class="nav-tab" href="#import" data-route="#import">数据导入</a></li>
+          <li><a class="nav-tab" href="#data" data-route="#data">数据管理</a></li>
+          <li><a class="nav-tab" href="#compare" data-route="#compare">数据比对</a></li>
+          <li><a class="nav-tab" href="#result" data-route="#result">比对结果</a></li>
+        </ul>
+      </nav>
+      <main id="app" class="main-card" aria-live="polite"></main>
+    </div>
     <script src="./amap-config.js"></script>
     <script src="./src/main.js"></script>
   </body>
-  </html>
+</html>
