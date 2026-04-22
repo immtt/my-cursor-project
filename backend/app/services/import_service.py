@@ -1,9 +1,10 @@
 from datetime import datetime
+import uuid
 
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
-from app.models.entities import ManualRoute, SysSuggest
+from app.models.entities import ImportAuditLog, ManualRoute, SysSuggest
 
 
 REQUIRED_COLUMNS = [
@@ -23,7 +24,7 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
-def import_excel(db: Session, dataset_type: str, file_path: str):
+def import_excel(db: Session, dataset_type: str, file_path: str, operator: str = "system"):
     wb = load_workbook(file_path)
     sheet = wb.active
     headers = [str(cell.value).strip() if cell.value else "" for cell in sheet[1]]
@@ -32,6 +33,8 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
     errors = []
     total_rows = 0
     success_rows = 0
+    staged_records = []
+    touched_dates = set()
 
     for col in REQUIRED_COLUMNS:
         if col not in header_map:
@@ -56,37 +59,74 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
 
+            touched_dates.add(route_date)
             if dataset_type == "system":
                 est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
                 est_duration = int(values[header_map.get("预计时效", -1)] or 0)
-                obj = SysSuggest(
-                    route_date=route_date,
-                    waybill_no=waybill_no,
-                    route_line=route_line,
-                    warehouse_name=warehouse_name,
-                    stores=stores,
-                    volume=volume,
-                    load_rate=load_rate,
-                    est_distance=est_distance,
-                    est_duration=est_duration,
+                staged_records.append(
+                    SysSuggest(
+                        route_date=route_date,
+                        waybill_no=waybill_no,
+                        route_line=route_line,
+                        warehouse_name=warehouse_name,
+                        stores=stores,
+                        volume=volume,
+                        load_rate=load_rate,
+                        est_distance=est_distance,
+                        est_duration=est_duration,
+                    )
                 )
             else:
-                obj = ManualRoute(
-                    route_date=route_date,
-                    waybill_no=waybill_no,
-                    route_line=route_line,
-                    warehouse_name=warehouse_name,
-                    stores=stores,
-                    volume=volume,
-                    load_rate=load_rate,
+                staged_records.append(
+                    ManualRoute(
+                        route_date=route_date,
+                        waybill_no=waybill_no,
+                        route_line=route_line,
+                        warehouse_name=warehouse_name,
+                        stores=stores,
+                        volume=volume,
+                        load_rate=load_rate,
+                    )
                 )
-            db.add(obj)
             success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
 
+    batch_id = uuid.uuid4().hex[:16]
+    for route_date in touched_dates:
+        if dataset_type == "system":
+            db.query(SysSuggest).filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1).update(
+                {"is_active": 0}
+            )
+        else:
+            db.query(ManualRoute).filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1).update(
+                {"is_active": 0}
+            )
+
+    imported_at = datetime.now()
+    for obj in staged_records:
+        obj.batch_id = batch_id
+        obj.is_active = 1
+        obj.import_operator = operator
+        obj.imported_at = imported_at
+        db.add(obj)
+
+    for route_date in touched_dates:
+        db.add(
+            ImportAuditLog(
+                batch_id=batch_id,
+                dataset_type=dataset_type,
+                route_date=route_date,
+                operator=operator,
+                total_rows=total_rows,
+                success_rows=success_rows,
+                failed_rows=total_rows - success_rows,
+            )
+        )
+
     db.commit()
     return {
+        "batch_id": batch_id,
         "total_rows": total_rows,
         "success_rows": success_rows,
         "failed_rows": total_rows - success_rows,
