@@ -3,6 +3,7 @@
 # 默认 8080：Mac 上 8000 常被「隔空播放接收器」占用，导致前端连不上后端。
 set -e
 BACKEND_PORT="${BACKEND_PORT:-8080}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/backend"
 if [ ! -d .venv ]; then
@@ -32,12 +33,12 @@ else
 fi
 
 cd "$ROOT/frontend"
-python3 -m http.server 5173 --bind 127.0.0.1 &
+python3 -m http.server "$FRONTEND_PORT" --bind 127.0.0.1 &
 FRONT_PID=$!
 
 echo ""
 echo "已启动（按 Ctrl+C 结束两个服务）："
-echo "  前端  http://127.0.0.1:5173"
+echo "  前端  http://127.0.0.1:${FRONTEND_PORT}"
 echo "  后端  http://127.0.0.1:${BACKEND_PORT}/docs"
 echo ""
 wait
