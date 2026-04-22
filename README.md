@@ -85,6 +85,15 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 
 **用配置文件（推荐，免每次 export）**：复制 `backend/.env.example` 为 **`backend/.env`**，修改其中的 **`DATABASE_URL`**，保存后 **重启后端** 即可。JetBrains **DataGrip** 里用相同主机、端口、库名、用户密码连接 MySQL，即与后端同一库。
 
+**把本地库表结构与代码同步**（MySQL 会自动 `CREATE DATABASE IF NOT EXISTS`，再按 ORM 建缺失表）：
+
+```bash
+cd backend && source .venv/bin/activate && pip install -r requirements.txt
+python3 ../scripts/sync_local_database.py
+```
+
+然后重启 `./scripts/restart-dev.sh`。本脚本**不会**把旧 SQLite 里的数据迁到 MySQL；若需迁数据要另做导出导入或写迁移脚本。
+
 ### 前端（静态页面）
 
 ```bash
