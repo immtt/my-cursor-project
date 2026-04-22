@@ -1,5 +1,5 @@
 const app = document.getElementById("app");
-const API_ORIGIN = window.__API_ORIGIN__ || "http://127.0.0.1:8080";
+const API_ORIGIN = String(window.__API_ORIGIN__ || "http://127.0.0.1:8080").replace(/\/$/, "");
 const API_BASE = `${API_ORIGIN}/api`;
 
 function backendUnreachableHtml(err) {
@@ -162,7 +162,7 @@ function renderImport() {
   document.getElementById("exportTemplateBtn").onclick = async () => {
     const wrap = document.getElementById("importRespWrap");
     const datasetType = document.getElementById("datasetType").value;
-    const url = `${API_BASE}/import/template?dataset_type=${encodeURIComponent(datasetType)}`;
+    const url = `${API_BASE}/import-template?dataset_type=${encodeURIComponent(datasetType)}`;
     const filename =
       datasetType === "system" ? "智能排线_导入模板_系统建议.xlsx" : "智能排线_导入模板_手动排线.xlsx";
     try {

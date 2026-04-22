@@ -22,7 +22,9 @@ from app.services.route_map_service import build_route_map_payload
 router = APIRouter()
 
 
-@router.get("/import/template")
+# 路径不可使用 /import/template：旧版仅注册 POST /import/{dataset_type} 时，GET 会误匹配为
+# dataset_type=template 并返回 405。独立路径避免与动态段冲突。
+@router.get("/import-template")
 def download_import_template(dataset_type: str = Query(..., description="system | manual")):
     if dataset_type not in {"system", "manual"}:
         raise HTTPException(status_code=400, detail="dataset_type must be system or manual")

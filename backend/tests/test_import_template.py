@@ -1,8 +1,10 @@
 from io import BytesIO
 
 import pytest
+from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
+from app.main import app
 from app.services.import_service import build_import_template_xlsx
 
 
@@ -39,3 +41,12 @@ def test_build_import_template_manual_columns():
 def test_build_import_template_invalid_type():
     with pytest.raises(ValueError):
         build_import_template_xlsx("other")
+
+
+def test_api_import_template_get_ok():
+    client = TestClient(app)
+    r = client.get("/api/import-template", params={"dataset_type": "system"})
+    assert r.status_code == 200
+    assert "spreadsheetml" in (r.headers.get("content-type") or "")
+    wb = load_workbook(BytesIO(r.content))
+    assert wb.active.max_row >= 2
