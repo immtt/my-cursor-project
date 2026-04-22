@@ -83,6 +83,8 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 
 可选：`export GAODE_MOCK_ENABLED=false` 等见 `backend/app/core/config.py`。
 
+**用配置文件（推荐，免每次 export）**：复制 `backend/.env.example` 为 **`backend/.env`**，修改其中的 **`DATABASE_URL`**，保存后 **重启后端** 即可。JetBrains **DataGrip** 里用相同主机、端口、库名、用户密码连接 MySQL，即与后端同一库。
+
 ### 前端（静态页面）
 
 ```bash

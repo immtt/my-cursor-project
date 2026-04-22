@@ -1,10 +1,17 @@
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+_backend_root = Path(__file__).resolve().parents[2]
+_env_file = _backend_root / ".env"
+if _env_file.is_file():
+    load_dotenv(_env_file)
 
 
 def _default_database_url() -> str:
-    """优先读环境变量，便于本地换库、图形工具连同一文件。"""
+    """优先读环境变量（含 backend/.env），便于本机 MySQL / SQLite 与 DataGrip 一致。"""
     return os.getenv("DATABASE_URL", "sqlite:///./smart_route.db")
 
 
