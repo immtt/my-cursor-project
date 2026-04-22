@@ -20,6 +20,11 @@ function syncNav() {
   });
 }
 
+function setWorkspaceTitle(title) {
+  const el = document.getElementById("workspace-page-title");
+  if (el) el.textContent = title;
+}
+
 function loadAmapScript(key, securityJsCode) {
   return new Promise((resolve, reject) => {
     if (window.AMap) {
@@ -72,19 +77,31 @@ function overviewSection(o) {
 
 function route() {
   const hash = window.location.hash || "#import";
-  if (hash.startsWith("#route-map")) renderRouteMap();
-  else if (hash === "#import") renderImport();
-  else if (hash === "#data") renderData();
-  else if (hash === "#compare") renderCompare();
-  else if (hash === "#result") renderResult();
-  else renderImport();
+  if (hash.startsWith("#route-map")) {
+    renderRouteMap();
+    setWorkspaceTitle("路线地图");
+  } else if (hash === "#import") {
+    renderImport();
+    setWorkspaceTitle("数据导入");
+  } else if (hash === "#data") {
+    renderData();
+    setWorkspaceTitle("数据管理");
+  } else if (hash === "#compare") {
+    renderCompare();
+    setWorkspaceTitle("数据比对");
+  } else if (hash === "#result") {
+    renderResult();
+    setWorkspaceTitle("比对结果");
+  } else {
+    renderImport();
+    setWorkspaceTitle("数据导入");
+  }
   syncNav();
 }
 
 function renderImport() {
   app.innerHTML = `
     <div class="page-head">
-      <h2>数据导入</h2>
       <p>同一排线日期与数据类型会执行覆盖导入，历史批次自动失效。</p>
     </div>
     <div class="toolbar">
@@ -127,7 +144,6 @@ function renderImport() {
 function renderData() {
   app.innerHTML = `
     <div class="page-head">
-      <h2>数据管理</h2>
       <p>当前 MVP 仅支持通过导入覆盖数据；列表维护能力可在后续版本接入。</p>
     </div>
     <div class="empty-hint">如需查看或导出明细，请使用「比对结果」页或连接数据库。</div>`;
@@ -136,7 +152,6 @@ function renderData() {
 function renderCompare() {
   app.innerHTML = `
     <div class="page-head">
-      <h2>数据比对</h2>
       <p>将按所选排线日对手动数据做补算（若需要），再执行系统与手工匹配并写入结果。</p>
     </div>
     <div class="toolbar">
@@ -176,7 +191,6 @@ function renderCompare() {
 function renderResult() {
   app.innerHTML = `
     <div class="page-head">
-      <h2>比对结果</h2>
       <p>按日期查看概览与明细，可导出 CSV；每行可打开路线地图对照轨迹。</p>
     </div>
     <div class="toolbar">
@@ -278,7 +292,6 @@ function renderRouteMap() {
   const rid = routeMapIdFromHash();
   app.innerHTML = `
     <div class="page-head">
-      <h2>路线地图</h2>
       <p>蓝色为系统建议路线，红色虚线为手工路线；图例与关键点序号见地图。</p>
     </div>
     <div class="map-layout">

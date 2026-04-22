@@ -15,6 +15,13 @@
   --radius-sm: 6px;
   --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
   --font: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  /* 左右结构 · 左侧导航 */
+  --sidebar-bg: linear-gradient(195deg, #1a2332 0%, #121820 55%, #0d1117 100%);
+  --sidebar-text: #e2e8f0;
+  --sidebar-muted: #94a3b8;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-active-bg: rgba(37, 99, 235, 0.35);
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
 }
 
 *,
@@ -36,36 +43,46 @@ body {
   line-height: 1.5;
 }
 
-/* 外壳：左侧菜单 + 右侧主区 */
+/* 外壳：始终左右分栏（左侧导航 + 右侧工作区） */
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  flex-direction: row;
   align-items: stretch;
+  min-height: 100vh;
+  width: 100%;
 }
 
 .sidebar {
-  width: 248px;
+  width: 264px;
   flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  padding: 20px 0 24px;
-  box-shadow: 2px 0 12px rgba(15, 23, 42, 0.04);
+  padding: 0 0 20px;
+  box-shadow: 6px 0 32px rgba(0, 0, 0, 0.18);
+  z-index: 20;
 }
 
 .sidebar__brand {
-  padding: 8px 20px 20px;
-  margin: 0 16px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 22px 20px 20px;
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .sidebar__brand-title {
-  font-size: 1.05rem;
+  font-size: 1.02rem;
   font-weight: 700;
-  color: var(--text);
-  line-height: 1.35;
-  letter-spacing: 0.02em;
+  color: #f8fafc;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
 }
 
 .sidebar-nav-wrap {
@@ -76,17 +93,18 @@ body {
 }
 
 .nav-group {
-  margin: 0 12px;
+  margin: 0 10px;
 }
 
 .nav-group__title {
   margin: 0;
-  padding: 10px 12px 8px;
-  font-size: 0.8125rem;
+  padding: 14px 14px 10px;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--border);
+  color: var(--sidebar-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .sidebar-nav {
@@ -99,40 +117,64 @@ body {
 }
 
 .sidebar-nav--level2 {
-  padding-left: 4px;
-  margin-left: 10px;
-  border-left: 2px solid var(--primary-soft);
+  padding-left: 6px;
+  margin-left: 12px;
+  border-left: 2px solid rgba(96, 165, 250, 0.35);
 }
 
 .sidebar-nav__link.nav-tab {
   display: block;
-  padding: 9px 12px 9px 14px;
+  padding: 10px 12px 10px 14px;
   border-radius: var(--radius-sm);
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: #cbd5e1;
   text-decoration: none;
   border: 1px solid transparent;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .sidebar-nav__link.nav-tab:hover {
-  color: var(--text);
-  background: rgba(37, 99, 235, 0.06);
+  color: #f8fafc;
+  background: var(--sidebar-hover-bg);
 }
 
 .sidebar-nav__link.nav-tab.is-active {
-  color: var(--primary);
-  background: var(--primary-soft);
-  border-color: rgba(37, 99, 235, 0.22);
+  color: #fff;
+  background: var(--sidebar-active-bg);
+  border-color: rgba(147, 197, 253, 0.35);
   font-weight: 600;
 }
 
+/* 右侧工作区：浅底 + 内容卡片 */
 .app-main {
   flex: 1;
   min-width: 0;
-  padding: 24px 28px 40px;
+  min-height: 100vh;
+  padding: 20px 28px 40px 32px;
   overflow-x: hidden;
+  background: var(--bg);
+}
+
+.workspace-header {
+  margin-bottom: 16px;
+}
+
+.workspace-header__crumb {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.workspace-header__title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
 }
 
 .main-card {
@@ -444,58 +486,37 @@ select:focus {
   text-decoration: underline;
 }
 
-@media (max-width: 720px) {
-  .app-shell {
-    flex-direction: column;
-  }
-
+/* 窄屏仍保持左右栏，仅压缩侧栏与内边距（避免出现「菜单跑到上面」） */
+@media (max-width: 900px) {
   .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    box-shadow: none;
-    padding: 16px 0 12px;
-  }
-
-  .sidebar__brand {
-    margin: 0 12px 12px;
-    padding-bottom: 16px;
-  }
-
-  .nav-group {
-    margin: 0 10px;
-  }
-
-  .nav-group__title {
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-
-  .sidebar-nav--level2 {
-    margin-left: 6px;
-    border-left-width: 2px;
-  }
-
-  .sidebar-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: 8px 4px 8px;
-    gap: 6px;
-  }
-
-  .sidebar-nav__link.nav-tab {
-    flex: 1 1 auto;
-    min-width: calc(50% - 6px);
-    text-align: center;
-    padding: 10px 12px;
+    width: 220px;
   }
 
   .app-main {
-    padding: 16px 16px 32px;
+    padding: 16px 18px 32px 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .sidebar {
+    width: 200px;
+  }
+
+  .sidebar__brand-title {
+    font-size: 0.9rem;
+  }
+
+  .sidebar-nav__link.nav-tab {
+    font-size: 0.8125rem;
+    padding: 8px 10px;
+  }
+
+  .app-main {
+    padding: 12px 12px 28px 14px;
   }
 
   .main-card {
-    padding: 20px 18px;
+    padding: 18px 16px;
   }
 
   .toolbar .btn {
