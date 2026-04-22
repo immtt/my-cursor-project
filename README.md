@@ -11,13 +11,31 @@
 
 ## 启动方式
 
-当前项目处于初始化阶段，尚未接入具体技术栈。
+### 后端（FastAPI）
 
-后续可按如下方式扩展：
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
 
-1. 在 `backend/` 初始化后端工程（Python/Java）
-2. 在 `frontend/` 初始化前端工程（React/Vue）
-3. 在 `docs/` 维护 PRD、接口定义与发布记录
+启动后访问：
+
+- 健康检查：`http://127.0.0.1:8000/health`
+- API文档：`http://127.0.0.1:8000/docs`
+
+### 前端（静态页面）
+
+```bash
+cd frontend
+python3 -m http.server 5173
+```
+
+启动后访问：
+
+- 页面入口：`http://127.0.0.1:5173`
 
 ## Git 分支规范
 
@@ -54,4 +72,11 @@
 - `feat: 完成用户登录模块`
 - `fix: 修复表单验证失效`
 - `style: 格式化代码`
+
+## 当前MVP功能
+
+- Excel导入（系统建议/手动排线）
+- 手动排线里程与时效补算（含地址缓存）
+- 按日期执行比对与结果概览
+- 结果查询、状态筛选、CSV导出
 
