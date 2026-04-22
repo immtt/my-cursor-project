@@ -37,6 +37,62 @@ function backendUnreachableHtml(err) {
   </div>`;
 }
 
+function escapeHtml(s) {
+  if (s == null || s === "") return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderImportListTable(rows, datasetTypeLabel) {
+  if (!rows || !rows.length) {
+    return `<p class="empty-hint">本批无明细行。</p>`;
+  }
+  const ths = [
+    "ID",
+    "排线日期",
+    "运单号",
+    "线路",
+    "仓库",
+    "门店",
+    "车型",
+    "体积",
+    "装载率",
+    "预估里程",
+    "预估时效",
+  ];
+  const head = ths.map((t) => `<th>${escapeHtml(t)}</th>`).join("");
+  const body = rows
+    .map((r) => {
+      const cells = [
+        r.id,
+        r.route_date ?? "",
+        r.waybill_no ?? "",
+        r.route_line ?? "",
+        r.warehouse_name ?? "",
+        r.stores ?? "",
+        r.vehicle_type ?? "",
+        r.volume ?? "",
+        r.load_rate ?? "",
+        r.est_distance ?? "",
+        r.est_duration ?? "",
+      ];
+      return `<tr>${cells.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`;
+    })
+    .join("");
+  return `<p class="page-head" style="margin-top:1rem;margin-bottom:0.5rem"><strong>本批导入明细</strong> · ${escapeHtml(
+    datasetTypeLabel
+  )} · 共 ${rows.length} 行</p>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
 async function refreshApiStatusBanner() {
   const el = document.getElementById("api-status-banner");
   if (!el) return;
@@ -218,10 +274,43 @@ function renderImport() {
     wrap.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
     const formData = new FormData();
     formData.append("file", file);
+    const importUrl = `${API_BASE}/import/${datasetType}`;
     try {
-      const resp = await fetch(`${API_BASE}/import/${datasetType}`, { method: "POST", body: formData });
+      const resp = await fetch(importUrl, { method: "POST", body: formData });
+      if (!resp.ok) {
+        const raw = await resp.text();
+        let errPayload;
+        try {
+          errPayload = JSON.parse(raw);
+        } catch {
+          errPayload = { _nonJsonBody: (raw || "").slice(0, 800) };
+        }
+        wrap.innerHTML = `<div class="alert alert--error">导入失败（HTTP ${resp.status}）</div><div class="code-block"><pre>${JSON.stringify(errPayload, null, 2)}</pre></div>`;
+        return;
+      }
       const data = await resp.json();
-      wrap.innerHTML = `<div class="code-block"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+      const jsonStr = JSON.stringify(data, null, 2);
+      let html = `<div class="code-block"><pre>${escapeHtml(jsonStr)}</pre></div>`;
+      const batchId = data.batch_id;
+      const successRows = Number(data.success_rows) || 0;
+      if (batchId && successRows > 0) {
+        try {
+          const rowsUrl = `${API_BASE}/import/rows?dataset_type=${encodeURIComponent(
+            datasetType
+          )}&batch_id=${encodeURIComponent(batchId)}`;
+          const r2 = await fetch(rowsUrl);
+          if (r2.ok) {
+            const rows = await r2.json();
+            const label = datasetType === "system" ? "系统建议数据" : "手动排线数据";
+            html += renderImportListTable(Array.isArray(rows) ? rows : [], label);
+          } else {
+            html += `<div class="alert alert--error">无法加载本批明细（HTTP ${r2.status}）</div>`;
+          }
+        } catch (e2) {
+          html += backendUnreachableHtml(e2);
+        }
+      }
+      wrap.innerHTML = html;
     } catch (err) {
       wrap.innerHTML = backendUnreachableHtml(err);
     }

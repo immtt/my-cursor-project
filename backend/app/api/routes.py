@@ -16,7 +16,7 @@ from app.models.entities import CompareRunLog
 from app.schemas.requests import CompareRequest
 from app.services.compare_service import overview, run_compare
 from app.services.gaode_service import backfill_manual_routes
-from app.services.import_service import build_import_template_xlsx, import_excel
+from app.services.import_service import build_import_template_xlsx, fetch_import_batch_rows, import_excel
 from app.services.result_service import export_results_csv, fetch_results
 from app.services.route_map_service import build_route_map_payload
 
@@ -40,6 +40,20 @@ def download_import_template(dataset_type: str = Query(..., description="system 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": disp},
     )
+
+
+@router.get("/import/rows")
+def get_import_rows(
+    dataset_type: str = Query(..., description="system | manual"),
+    batch_id: str = Query(..., description="导入接口返回的 batch_id"),
+    db: Session = Depends(get_db),
+):
+    if dataset_type not in {"system", "manual"}:
+        raise HTTPException(status_code=400, detail="dataset_type must be system or manual")
+    try:
+        return fetch_import_batch_rows(db, dataset_type, batch_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/import/{dataset_type}")

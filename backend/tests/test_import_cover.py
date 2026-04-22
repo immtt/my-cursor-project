@@ -5,7 +5,7 @@ from datetime import date
 from openpyxl import Workbook
 
 from app.models.entities import SysSuggest
-from app.services.import_service import import_excel
+from app.services.import_service import fetch_import_batch_rows, import_excel
 
 
 def _create_system_excel(path: str, volume: float):
@@ -45,3 +45,15 @@ def test_import_cover_marks_old_batch_inactive(db_session):
     assert len(active_rows) == 1
     assert len(inactive_rows) == 1
     assert active_rows[0].volume == 9.0
+
+
+def test_fetch_import_batch_rows_matches_import_batch(db_session):
+    path = os.path.join(tempfile.gettempdir(), "sys_rows.xlsx")
+    _create_system_excel(path, 10.5)
+    out = import_excel(db_session, "system", path, operator="t")
+    bid = out["batch_id"]
+    rows = fetch_import_batch_rows(db_session, "system", bid)
+    assert len(rows) == 1
+    assert rows[0]["waybill_no"] == "SYS001"
+    assert rows[0]["volume"] == 10.5
+    assert rows[0]["route_date"] == "2026-04-20"

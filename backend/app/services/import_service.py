@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import date, datetime
 from io import BytesIO
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
@@ -247,3 +247,60 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
         "failed_rows": total_rows - success_rows,
         "errors": errors,
     }
+
+
+def fetch_import_batch_rows(db: Session, dataset_type: str, batch_id: str) -> List[Dict[str, Any]]:
+    """按导入返回的 batch_id 查询本批生效行（仅 is_active=1）。"""
+    if dataset_type not in {"system", "manual"}:
+        raise ValueError("dataset_type must be system or manual")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id required")
+    bid = str(batch_id).strip()
+    out: List[Dict[str, Any]] = []
+    if dataset_type == "system":
+        rows = (
+            db.query(SysSuggest)
+            .filter(SysSuggest.batch_id == bid, SysSuggest.is_active == 1)
+            .order_by(SysSuggest.id)
+            .all()
+        )
+        for r in rows:
+            out.append(
+                {
+                    "id": r.id,
+                    "route_date": r.route_date.isoformat() if r.route_date else None,
+                    "waybill_no": r.waybill_no,
+                    "route_line": r.route_line,
+                    "warehouse_name": r.warehouse_name,
+                    "stores": r.stores,
+                    "vehicle_type": r.vehicle_type,
+                    "volume": r.volume,
+                    "load_rate": r.load_rate,
+                    "est_distance": r.est_distance,
+                    "est_duration": r.est_duration,
+                }
+            )
+    else:
+        rows = (
+            db.query(ManualRoute)
+            .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
+            .order_by(ManualRoute.id)
+            .all()
+        )
+        for r in rows:
+            out.append(
+                {
+                    "id": r.id,
+                    "route_date": r.route_date.isoformat() if r.route_date else None,
+                    "waybill_no": r.waybill_no,
+                    "route_line": r.route_line,
+                    "warehouse_name": r.warehouse_name,
+                    "stores": r.stores,
+                    "vehicle_type": r.vehicle_type,
+                    "volume": r.volume,
+                    "load_rate": r.load_rate,
+                    "est_distance": r.est_distance,
+                    "est_duration": r.est_duration,
+                }
+            )
+    return out
