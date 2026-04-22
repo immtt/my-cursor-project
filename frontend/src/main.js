@@ -1,19 +1,39 @@
 const app = document.getElementById("app");
-const API_ORIGIN = String(window.__API_ORIGIN__ || "http://127.0.0.1:8080").replace(/\/$/, "");
+
+/** 与 scripts/start-dev.sh 中 BACKEND_PORT 一致；仅在不设置 __API_ORIGIN__ 时参与拼接 */
+const API_PORT = (() => {
+  const x = window.__API_PORT__;
+  if (x == null || x === "") return 8080;
+  const n = Number(x);
+  return Number.isFinite(n) && n > 0 ? n : 8080;
+})();
+
+function inferApiOrigin() {
+  if (window.__API_ORIGIN__) return String(window.__API_ORIGIN__).replace(/\/$/, "");
+  const host = window.location.hostname;
+  const proto = window.location.protocol;
+  if (host && (proto === "http:" || proto === "https:")) {
+    const p = proto === "https:" ? "https:" : "http:";
+    return `${p}//${host}:${API_PORT}`.replace(/\/$/, "");
+  }
+  return `http://127.0.0.1:${API_PORT}`;
+}
+
+const API_ORIGIN = inferApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
 
 function backendUnreachableHtml(err) {
   const detail = err && err.message ? `（${err.message}）` : "";
   const isFetchFail = /failed to fetch|networkerror|load failed/i.test(detail);
   const corsHint = isFetchFail
-    ? `<br/><small>若新标签能打开 <a href="${API_ORIGIN}/health" target="_blank" rel="noopener">/health</a> 但页面仍报错，多半是<strong>不要用「文件」方式双击打开 HTML</strong>，请用 <code>http://127.0.0.1:5173</code> 访问前端；并确保地址栏是 <code>127.0.0.1</code> 或 <code>localhost</code>，不要用局域网 IP 打开页面却访问本机 127.0.0.1 接口。</small>`
+    ? `<br/><small>请先在新标签打开 <a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a>（应与地址栏主机一致）。不要用「文件」双击打开 HTML。若改过后端端口，在 <code>index.html</code> 里于 main.js 之前设置 <code>window.__API_PORT__</code> 或 <code>window.__API_ORIGIN__</code>。</small>`
     : "";
   return `<div class="alert alert--error">
     <strong>无法连接后端</strong>${detail}<br/>
     1）在项目根目录执行：<code>./scripts/start-dev.sh</code>（前后端一起启动）<br/>
-    2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 127.0.0.1 --port 8080</code><br/>
+    2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 0.0.0.0 --port 8080</code><br/>
     3）浏览器打开自检：<a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a> 应返回 <code>{"status":"ok"}</code>${corsHint}<br/>
-    <small>默认接口端口为 8080（避免与 Mac 隔空播放占用 8000）。若改端口，请在 <code>index.html</code> 中于 main.js 之前设置 <code>window.__API_ORIGIN__</code>。</small>
+    <small>默认接口端口为 8080。页面会用<strong>当前网址的主机名</strong>访问后端（局域网打开页面时会连同一台电脑的 8080）。若改端口请设置 <code>window.__API_PORT__</code> 或 <code>window.__API_ORIGIN__</code>。</small>
   </div>`;
 }
 
