@@ -1,5 +1,7 @@
-from datetime import datetime
+import re
 import uuid
+from datetime import datetime
+from typing import Dict
 
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
@@ -24,11 +26,30 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _normalize_header_label(raw: str) -> str:
+    """将「配送体积(m³)」「装载率(%)」等与必填列名对齐。"""
+    s = raw.strip()
+    s = re.sub(r"\s*[\(（][^)）]+[\)）]\s*$", "", s).strip()
+    return s
+
+
+def _build_header_map(sheet) -> Dict[str, int]:
+    raw = [str(cell.value).strip() if cell.value else "" for cell in sheet[1]]
+    header_map: Dict[str, int] = {}
+    for idx, name in enumerate(raw):
+        if not name:
+            continue
+        key = _normalize_header_label(name)
+        if key not in header_map:
+            header_map[key] = idx
+    return header_map
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str, operator: str = "system"):
     wb = load_workbook(file_path)
     sheet = wb.active
+    header_map = _build_header_map(sheet)
     headers = [str(cell.value).strip() if cell.value else "" for cell in sheet[1]]
-    header_map = {name: idx for idx, name in enumerate(headers)}
 
     errors = []
     total_rows = 0
