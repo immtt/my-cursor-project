@@ -3,24 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>智能排线 · 数据比对</title>
+    <title>供应链非正式行为 · 智能排线</title>
     <link rel="stylesheet" href="./src/theme.css" />
   </head>
   <body>
-    <div class="app-frame">
-      <header class="app-header">
-        <h1 class="app-header__title">智能排线</h1>
-        <p class="app-header__sub">导入 · 比对 · 结果与路线地图（MVP）</p>
-      </header>
-      <nav>
-        <ul class="nav-tabs" id="main-nav">
-          <li><a class="nav-tab" href="#import" data-route="#import">数据导入</a></li>
-          <li><a class="nav-tab" href="#data" data-route="#data">数据管理</a></li>
-          <li><a class="nav-tab" href="#compare" data-route="#compare">数据比对</a></li>
-          <li><a class="nav-tab" href="#result" data-route="#result">比对结果</a></li>
-        </ul>
-      </nav>
-      <main id="app" class="main-card" aria-live="polite"></main>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="sidebar__brand">
+          <div class="sidebar__brand-title">供应链非正式行为</div>
+          <div class="sidebar__brand-sub">智能排线 · MVP</div>
+        </div>
+        <nav>
+          <ul class="sidebar-nav" id="main-nav">
+            <li>
+              <a class="sidebar-nav__link nav-tab" href="#import" data-route="#import">数据导入</a>
+            </li>
+            <li>
+              <a class="sidebar-nav__link nav-tab" href="#data" data-route="#data">数据管理</a>
+            </li>
+            <li>
+              <a class="sidebar-nav__link nav-tab" href="#compare" data-route="#compare">数据比对</a>
+            </li>
+            <li>
+              <a class="sidebar-nav__link nav-tab" href="#result" data-route="#result">比对结果</a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+      <div class="app-main">
+        <main id="app" class="main-card" aria-live="polite"></main>
+      </div>
     </div>
     <script src="./amap-config.js"></script>
     <script src="./src/main.js"></script>
