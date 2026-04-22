@@ -1,5 +1,5 @@
 const app = document.getElementById("app");
-const API_ORIGIN = window.__API_ORIGIN__ || "http://127.0.0.1:8000";
+const API_ORIGIN = window.__API_ORIGIN__ || "http://127.0.0.1:8080";
 const API_BASE = `${API_ORIGIN}/api`;
 
 function backendUnreachableHtml(err) {
@@ -7,9 +7,9 @@ function backendUnreachableHtml(err) {
   return `<div class="alert alert--error">
     <strong>无法连接后端</strong>${detail}<br/>
     1）在项目根目录执行：<code>./scripts/start-dev.sh</code>（前后端一起启动）<br/>
-    2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 127.0.0.1 --port 8000</code><br/>
+    2）或仅后端：<code>cd backend &amp;&amp; source .venv/bin/activate &amp;&amp; uvicorn app.main:app --host 127.0.0.1 --port 8080</code><br/>
     3）浏览器打开自检：<a href="${API_ORIGIN}/health" target="_blank" rel="noopener">${API_ORIGIN}/health</a> 应返回 <code>{"status":"ok"}</code><br/>
-    <small>Mac 常见：端口 8000 被「隔空播放接收器」占用 → 系统设置中关闭，或把后端改到其它端口并设置 <code>window.__API_ORIGIN__</code>。</small>
+    <small>默认接口端口为 8080（避免与 Mac 隔空播放占用 8000）。若改端口，请在 <code>index.html</code> 中于 main.js 之前设置 <code>window.__API_ORIGIN__</code>。</small>
   </div>`;
 }
 
@@ -30,7 +30,7 @@ async function refreshApiStatusBanner() {
     el.className = "api-status-banner api-status-banner--error";
     el.innerHTML = `<strong>未连接到后端</strong> <code>${API_ORIGIN}</code>
       · <a href="#" class="api-retry-check">重试检测</a>
-      <div class="api-status-banner__hint">请先运行 <code>./scripts/start-dev.sh</code>。若已运行仍失败，检查 8000 端口是否被占用（Mac「隔空播放」）。</div>`;
+      <div class="api-status-banner__hint">请先运行 <code>./scripts/start-dev.sh</code>（默认后端 <code>:8080</code>）。若已运行仍失败，看终端里 uvicorn 是否报错。</div>`;
     el.querySelector(".api-retry-check")?.addEventListener("click", (ev) => {
       ev.preventDefault();
       refreshApiStatusBanner();

@@ -19,8 +19,8 @@
 
 然后浏览器打开 **[http://127.0.0.1:5173](http://127.0.0.1:5173)**。
 
-**若页面提示连不上后端**：先在新标签打开 [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)，应看到 `{"status":"ok"}`。  
-常见原因：只起了前端、未起后端；或 **Mac 上 8000 端口被「隔空播放接收器」占用**（系统设置 → 通用 → 隔空播放与接力 → 关闭）。脚本启动后会自动做一次 `/health` 检测并在终端提示。
+**若页面提示连不上后端**：先在新标签打开 [http://127.0.0.1:8080/health](http://127.0.0.1:8080/health)，应看到 `{"status":"ok"}`。  
+默认后端端口为 **8080**（避免 Mac 上 **8000** 常被「隔空播放接收器」占用）。脚本启动后会自动检测 `/health`。
 
 ---
 
@@ -31,7 +31,7 @@
    cd backend
    python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-   uvicorn app.main:app --reload --port 8000
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
    ```
 
 2. **终端 B — 前端**  
@@ -55,13 +55,13 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 ```
 
 启动后访问：
 
-- 健康检查：`http://127.0.0.1:8000/health`
-- API文档：`http://127.0.0.1:8000/docs`
+- 健康检查：`http://127.0.0.1:8080/health`
+- API文档：`http://127.0.0.1:8080/docs`
 
 ### 前端（静态页面）
 
