@@ -210,7 +210,8 @@
     - `system_store_count` / `manual_store_count`：当日各侧运单行经 `normalize_stores` 展开后的**不重复店名**个数（与门店差异的「面」按日累加趋势一致，但此处为**逐日**而非区间汇总）。
   - **`waybill_store_load`**：**运单配载门店**（一车/一单配几家店），与 `warehouse_name`、排线闭区间一致；**随 `dataset_type` 过滤**：`all` 时系统、手工运单均列出；`system` / `manual` 时仅该侧。每条运单一行，拼载门店个数 = `normalize_stores(拼载门店)` 的**去重个数**。
     - `summary`：`waybill_count`（条数）、`avg_store_count`（全样本平均配载门店数）；`system_waybill_count` / `system_avg_store_count` / `manual_waybill_count` / `manual_avg_store_count`（各侧条数与单均，单侧无数据时为 0）。
-    - `items`：`route_date`、`waybill_no`、`dataset_type`（`system` | `manual`）、`vehicle_type`（空为「（未填）」）、`store_count`（整数）。
+    - `by_vehicle_type`：在筛选区间内**按车型**（选「全部」时再多一层 `dataset_type`：系统/手工不混加）的汇总。每项含 `vehicle_type`、`waybill_count`、**`store_count_distribution`**（键为配载店数字符串 `\"1\"` `\"2\"`…，值为该档运单数）、`avg_store_count`（该车型在区间内的**单均配载去重店数**）。选 `dataset_type=all` 时多字段 **`dataset_type`**（`system` | `manual`）；单侧筛选时无 `dataset_type` 字段。
+    - `items`：逐单明细（`route_date`、`waybill_no`、`dataset_type`、`vehicle_type`、`store_count` 等），**产品前端不展示**该列表，仅使用 `summary` 与 `by_vehicle_type`；保留字段供其它消费方或排障拉取。
 
 ```json
 {
@@ -270,6 +271,15 @@
       "manual_waybill_count": 20,
       "manual_avg_store_count": 2.6
     },
+    "by_vehicle_type": [
+      {
+        "vehicle_type": "4.2米标箱",
+        "dataset_type": "manual",
+        "waybill_count": 10,
+        "store_count_distribution": { "1": 2, "2": 3, "3": 5 },
+        "avg_store_count": 2.3
+      }
+    ],
     "items": [
       {
         "route_date": "2026-04-20",

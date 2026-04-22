@@ -8,6 +8,7 @@ from app.services.diff_analysis_service import (
     list_multi_vehicle_stores,
     store_diff_summary,
     vehicle_diff_by_type,
+    waybill_store_load,
 )
 
 
@@ -77,12 +78,45 @@ def test_vehicle_diff_by_type_system_vs_manual(db_session):
     by_wb = {x["waybill_no"]: x for x in wsl["items"]}
     assert by_wb["M1"]["store_count"] == 2
     assert by_wb["M3"]["store_count"] == 1
+    bvt = {((x.get("dataset_type"), x["vehicle_type"])): x for x in wsl["by_vehicle_type"]}
+    assert bvt[("system", "4.2米")]["waybill_count"] == 1
+    assert bvt[("system", "4.2米")]["store_count_distribution"] == {"1": 1}
+    assert bvt[("system", "4.2米")]["avg_store_count"] == 1.0
+    assert bvt[("manual", "4.2米")]["waybill_count"] == 2
+    assert bvt[("manual", "4.2米")]["store_count_distribution"] == {"1": 1, "2": 1}
+    assert bvt[("manual", "4.2米")]["avg_store_count"] == 1.5
+    assert bvt[("manual", "6.8米")]["store_count_distribution"] == {"1": 1}
     sd = r["store_diff"]
     assert sd["system_store_count"] == 1
     assert sd["manual_store_count"] == 3
     assert sd["diff"] == -2
     assert sd["only_in_system"] == ["店D"]
     assert set(sd["only_in_manual"]) == {"店A", "店B", "店C"}
+
+
+def test_waybill_store_load_by_vehicle_type_distribution_and_avg(db_session):
+    """按车型：各配载店数档位的运单数 + 单均（与截图口径一致）。"""
+    d = date(2026, 4, 19)
+    for i in range(2):
+        m = _manual(f"WA{i}", "店A", d)
+        m.vehicle_type = "4.2米标箱"
+        db_session.add(m)
+    for i in range(3):
+        m = _manual(f"WB{i}", "店A,店B", d)
+        m.vehicle_type = "4.2米标箱"
+        db_session.add(m)
+    for i in range(5):
+        m = _manual(f"WC{i}", "店A,店B,店C", d)
+        m.vehicle_type = "4.2米标箱"
+        db_session.add(m)
+    db_session.commit()
+    w = waybill_store_load(db_session, d, d, "manual", None)
+    bvt = {x["vehicle_type"]: x for x in w["by_vehicle_type"]}
+    t = bvt["4.2米标箱"]
+    assert t["waybill_count"] == 10
+    assert t["store_count_distribution"] == {"1": 2, "2": 3, "3": 5}
+    assert t["avg_store_count"] == 2.3
+    assert "dataset_type" not in t
 
 
 def test_store_diff_only_sides_and_symmetric_equal(db_session):

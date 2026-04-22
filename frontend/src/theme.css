@@ -459,8 +459,38 @@ select {
 }
 
 input[type="file"] {
-  padding: 8px;
+  padding: 8px 10px;
   cursor: pointer;
+  min-height: 2.5rem;
+  box-sizing: border-box;
+}
+
+/* 统一「选择文件」按钮外观，与 btn--secondary 一致（Chrome / Edge / Safari） */
+input[type="file"].input-file::file-selector-button,
+input[type="file"].input-file::-webkit-file-upload-button {
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-right: 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+input[type="file"].input-file::file-selector-button:hover,
+input[type="file"].input-file::-webkit-file-upload-button:hover {
+  background: var(--bg);
+  border-color: #cbd2e0;
+}
+
+.toolbar .field--file-import {
+  flex: 0 1 280px;
+  min-width: 200px;
+  max-width: 360px;
 }
 
 input:focus,
@@ -483,6 +513,22 @@ select:focus {
   border: 1px solid transparent;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+/* 链接式按钮：与 button.btn 视觉一致，避免默认下划线/访问色破坏工具栏 */
+a.btn {
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+a.btn--secondary,
+a.btn--secondary:visited {
+  color: var(--text);
+}
+
+a.btn--primary,
+a.btn--primary:visited {
+  color: #fff;
 }
 
 .btn--primary {
@@ -845,19 +891,19 @@ select:focus {
 
 .map-layout .route-map-wb-section {
   padding: 12px 16px;
-  background: var(--surface);
+  background: #fff;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   font-size: 0.875rem;
 }
 
-/* 系统运单：蓝；手工运单：红（与地图线色一致） */
+/* 标题与运单号仍区分系统蓝 / 手工红；面板统一白底 */
 .map-layout .route-map-wb-section--system {
-  border-left: 3px solid #1677ff;
+  border-left: 1px solid var(--border);
 }
 
 .map-layout .route-map-wb-section--manual {
-  border-left: 3px solid #ff4d4f;
+  border-left: 1px solid var(--border);
 }
 
 .map-layout .route-map-wb-section--system .route-map-wb-label {
@@ -899,6 +945,15 @@ select:focus {
   font-size: 0.85rem;
 }
 
+/* 车型：紧接运单号标签的下一行（原「送货顺序」说明已移除） */
+.map-layout .route-map-wb-vt-line {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
 .map-layout .route-map-sub {
   margin: 0 0 8px;
   font-size: 0.78rem;
@@ -923,7 +978,7 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  background: var(--surface);
+  background: #fff;
   min-width: 11rem;
   max-width: 18rem;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -955,6 +1010,12 @@ select:focus {
 
 .map-layout .route-map-wb-section--manual .route-map-flow__seq {
   background: #ff4d4f;
+}
+
+/* 两侧线路均出现的同名站点：序号牌为绿色（卡片边框仍为普通灰框） */
+.map-layout .route-map-wb-section--system .route-map-flow__seq--shared,
+.map-layout .route-map-wb-section--manual .route-map-flow__seq--shared {
+  background: #16a34a;
 }
 
 .map-layout .route-map-flow__name {
@@ -1119,6 +1180,11 @@ select:focus {
 
 .route-map-pin-label--manual {
   border-color: #ff4d4f;
+}
+
+/* 系统与手工在同一点且名称一致（与侧栏绿色序号牌判定一致） */
+.route-map-pin-label--shared {
+  border-color: #16a34a;
 }
 
 .route-map-pin-label--merged {
@@ -1301,93 +1367,49 @@ select:focus {
   max-width: 52rem;
 }
 
-.diff-wbload-paged {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.diff-wbload-vt-wrap {
+  margin: 0 0 16px;
+  padding: 14px 16px 16px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 58rem;
 }
 
-.table-scroll--diff-wbload {
-  max-height: min(22rem, 55vh);
+.diff-wbload-vt__title {
+  margin: 0 0 6px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
-.data-table--diff-wbload .td-num {
+.diff-wbload-vt__sub {
+  margin: 0 0 10px;
+  max-width: 50rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.table-scroll--diff-wbload-vt {
+  max-height: min(20rem, 50vh);
+}
+
+.data-table--diff-wbload-vt th,
+.data-table--diff-wbload-vt td {
+  white-space: normal;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.data-table--diff-wbload-vt .td-num {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-.data-table--diff-wbload th,
-.data-table--diff-wbload td {
-  white-space: normal;
-  vertical-align: top;
-}
-
-.diff-wbload-pager {
-  margin: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-
-.diff-wbload-pager__summary {
-  margin: 0;
-  flex: 1 1 12rem;
-  font-size: 0.8rem;
-  line-height: 1.4;
+.data-table--diff-wbload-vt .td-dist {
+  font-size: 0.85rem;
+  line-height: 1.45;
   color: var(--text);
-}
-
-.diff-wbload--grouped {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.diff-wbload-shared-pager {
-  margin: 0 0 4px;
-  padding: 10px 12px;
-  background: #f5f7fa;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  align-items: center;
-  gap: 10px 16px;
-}
-
-.diff-wbload-shared-pager__hint {
-  margin: 0;
-  flex: 1 1 14rem;
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
-
-.diff-wbload-group {
-  margin: 0;
-  padding: 0 2px;
-}
-
-.diff-wbload-group__title {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.diff-wbload-group__count {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.diff-wbload-group__empty {
-  margin: 0;
-}
-
-.diff-wbload-group .diff-wbload-paged {
-  gap: 8px;
 }
 
 .diff-analysis-store-grid {
@@ -1470,6 +1492,26 @@ select:focus {
 .diff-store-list-pager__summary .empty-hint {
   font-weight: 500;
   font-size: 0.78rem;
+}
+
+/* 排线差异 · 结果表客户端分页 */
+.compare-result-pager-wrap {
+  margin: 10px 0 0;
+}
+
+.compare-result-pager {
+  margin: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.compare-result-pager__summary {
+  margin: 0;
+  flex: 1 1 12rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text);
 }
 
 /* 差异分析 · 一店多车趋势图 */

@@ -387,6 +387,55 @@ def _waybill_vehicle_label(vehicle_type: Optional[str]) -> str:
     return s if s else "（未填）"
 
 
+def _by_vehicle_type_store_breakdown(
+    items: List[Dict[str, Any]], dataset_type: str
+) -> List[Dict[str, Any]]:
+    """
+    按车型（选「全部」时再多一层 dataset_type）统计：
+    各「配载门店数」档位的运单命中数、以及该车型在时间范围内的单均配载店数。
+    """
+    if not items:
+        return []
+    group_map: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
+    for x in items:
+        vt = x["vehicle_type"]
+        if dataset_type == "all":
+            key = (x["dataset_type"], vt)
+        else:
+            key = (vt,)
+        group_map.setdefault(key, []).append(x)
+
+    def _sort_key(k: Tuple[Any, ...]) -> Tuple:
+        if len(k) == 2:
+            side_order = 0 if k[0] == "system" else 1
+            return (side_order, str(k[1]))
+        return (0, str(k[0]))
+
+    out: List[Dict[str, Any]] = []
+    for key in sorted(group_map.keys(), key=_sort_key):
+        rows = group_map[key]
+        dist: Dict[str, int] = defaultdict(int)
+        for r in rows:
+            sc = int(r["store_count"])
+            if sc < 0:
+                sc = 0
+            dist[str(sc)] = dist.get(str(sc), 0) + 1
+        wcount = len(rows)
+        total_sc = sum(int(x["store_count"]) for x in rows)
+        avg = round((total_sc / wcount), 2) if wcount else 0.0
+        dist_sorted = {d: dist[d] for d in sorted(dist.keys(), key=int)}
+        row: Dict[str, Any] = {
+            "vehicle_type": key[-1] if key else "（未填）",
+            "waybill_count": wcount,
+            "avg_store_count": avg,
+            "store_count_distribution": dist_sorted,
+        }
+        if dataset_type == "all":
+            row["dataset_type"] = key[0]
+        out.append(row)
+    return out
+
+
 def waybill_store_load(
     db: Session,
     route_date_from: date,
@@ -456,7 +505,12 @@ def waybill_store_load(
         "manual_waybill_count": len(man_rows),
         "manual_avg_store_count": _avg(man_rows),
     }
-    return {"summary": summary, "items": items}
+    by_vt = _by_vehicle_type_store_breakdown(items, dataset_type)
+    return {
+        "summary": summary,
+        "by_vehicle_type": by_vt,
+        "items": items,
+    }
 
 
 def list_multi_vehicle_stores(
