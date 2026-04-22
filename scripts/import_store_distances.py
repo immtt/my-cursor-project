@@ -102,6 +102,24 @@ def upsert_store_coord(
         db.flush()
 
 
+def upsert_store_pair_distance(db: Session, store_from: str, store_to: str, distance_km: float) -> None:
+    row = (
+        db.query(StorePairDistance)
+        .filter(StorePairDistance.store_from == store_from, StorePairDistance.store_to == store_to)
+        .first()
+    )
+    if row:
+        row.distance_km = distance_km
+    else:
+        db.add(
+            StorePairDistance(
+                store_from=store_from,
+                store_to=store_to,
+                distance_km=distance_km,
+            )
+        )
+
+
 def import_workbook(path: Path, data_source_label: str) -> dict:
     wb = load_workbook(path, read_only=True, data_only=True)
     stats = {"sheets": 0, "distance_rows": 0, "stores_updated": 0, "skipped_rows": 0}
@@ -125,11 +143,6 @@ def import_workbook(path: Path, data_source_label: str) -> dict:
                 print(f"[skip] sheet {sheet_name!r}: 表头不匹配", file=sys.stderr)
                 continue
 
-            db.query(StorePairDistance).filter(StorePairDistance.region == sheet_name).delete(
-                synchronize_session=False
-            )
-
-            region = sheet_name
             for row in rows_iter:
                 if not row:
                     continue
@@ -149,14 +162,7 @@ def import_workbook(path: Path, data_source_label: str) -> dict:
                 upsert_store_coord(db, n1, coord1[0], coord1[1], data_source_label)
                 upsert_store_coord(db, n2, coord2[0], coord2[1], data_source_label)
 
-                db.add(
-                    StorePairDistance(
-                        region=region,
-                        store_from=n1,
-                        store_to=n2,
-                        distance_km=dist,
-                    )
-                )
+                upsert_store_pair_distance(db, n1, n2, dist)
                 stats["distance_rows"] += 1
 
             db.commit()

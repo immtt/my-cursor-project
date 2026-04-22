@@ -15,12 +15,26 @@ def _default_database_url() -> str:
     return os.getenv("DATABASE_URL", "sqlite:///./smart_route.db")
 
 
+def _default_gaode_mock() -> bool:
+    """未配置 AMAP_KEY 时默认走模拟；配置 Key 后默认走真实高德，除非 GAODE_MOCK_ENABLED=true。"""
+    if (os.getenv("AMAP_KEY") or "").strip():
+        return os.getenv("GAODE_MOCK_ENABLED", "false").lower() in ("1", "true", "yes")
+    return os.getenv("GAODE_MOCK_ENABLED", "true").lower() in ("1", "true", "yes")
+
+
 class Settings(BaseModel):
     app_name: str = "Smart Route Compare API"
     database_url: str = Field(default_factory=_default_database_url)
-    gaode_mock_enabled: bool = Field(
-        default_factory=lambda: os.getenv("GAODE_MOCK_ENABLED", "true").lower() in ("1", "true", "yes")
+    gaode_mock_enabled: bool = Field(default_factory=_default_gaode_mock)
+    amap_key: str = Field(default_factory=lambda: (os.getenv("AMAP_KEY") or "").strip())
+    amap_security_key: str = Field(
+        default_factory=lambda: (os.getenv("AMAP_SECURITY_KEY") or "").strip()
     )
 
 
 settings = Settings()
+
+
+def amap_rest_enabled() -> bool:
+    """手动补算等是否调用高德 REST（需 Key 且未强制模拟）。"""
+    return bool(settings.amap_key) and not settings.gaode_mock_enabled

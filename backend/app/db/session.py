@@ -14,20 +14,30 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
 
+def _is_duplicate_column_error(exc: OperationalError) -> bool:
+    msg = str(exc).lower()
+    if "duplicate" in msg or "already exists" in msg:
+        return True
+    orig = getattr(exc, "orig", None)
+    args = getattr(orig, "args", None) if orig is not None else None
+    if args and args[0] == 1060:
+        return True
+    return False
+
+
 def ensure_sqlite_schema() -> None:
-    """`create_all` 不会给已有表补列；旧版库缺 vehicle_type 时导入会 500。仅 SQLite 上补全。"""
-    if not str(engine.url).startswith("sqlite"):
-        return
+    """`create_all` 不会给已有表补列；对 SQLite / MySQL 旧库尝试 ADD COLUMN（列已存在则跳过）。"""
     alters = [
         ("manual_route", "vehicle_type", "VARCHAR(100) NOT NULL DEFAULT ''"),
         ("sys_suggest", "vehicle_type", "VARCHAR(100) NOT NULL DEFAULT ''"),
+        ("manual_route", "delivery_store_order", "TEXT NULL"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in alters:
             try:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
             except OperationalError as e:
-                if "duplicate" not in str(e).lower():
+                if not _is_duplicate_column_error(e):
                     raise
 
 

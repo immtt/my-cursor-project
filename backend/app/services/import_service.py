@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from datetime import date, datetime
@@ -266,6 +267,12 @@ def _suggest_row_dict(r: SysSuggest) -> Dict[str, Any]:
 
 
 def _manual_row_dict(r: ManualRoute) -> Dict[str, Any]:
+    order = None
+    if r.delivery_store_order:
+        try:
+            order = json.loads(r.delivery_store_order)
+        except (json.JSONDecodeError, TypeError):
+            order = r.delivery_store_order
     return {
         "id": r.id,
         "route_date": r.route_date.isoformat() if r.route_date else None,
@@ -278,6 +285,7 @@ def _manual_row_dict(r: ManualRoute) -> Dict[str, Any]:
         "load_rate": r.load_rate,
         "est_distance": r.est_distance,
         "est_duration": r.est_duration,
+        "delivery_store_order": order,
     }
 
 

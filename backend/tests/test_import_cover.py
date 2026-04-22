@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from datetime import date
@@ -242,6 +243,8 @@ def test_backfill_manual_routes_by_batch_sets_estimates(db_session):
     assert row.est_distance is not None
     assert row.est_duration is not None
     assert row.calc_status == 1
+    assert row.delivery_store_order
+    assert json.loads(row.delivery_store_order) == ["门店甲"]
 
 
 def test_api_manual_backfill_unknown_batch_returns_zero():

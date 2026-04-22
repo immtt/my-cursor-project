@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS manual_route (
   est_distance DECIMAL(10,2) NULL,
   est_duration INT NULL,
   route_polyline MEDIUMTEXT NULL,
+  delivery_store_order MEDIUMTEXT NULL,
   calc_status TINYINT DEFAULT 0,
   batch_id VARCHAR(64) NOT NULL,
   is_active TINYINT NOT NULL DEFAULT 1,
@@ -51,6 +52,27 @@ CREATE TABLE IF NOT EXISTS address_cache (
   longitude DECIMAL(10,6) NOT NULL,
   latitude DECIMAL(10,6) NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS store_coordinate (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  store_name VARCHAR(300) NOT NULL,
+  longitude DOUBLE NOT NULL,
+  latitude DOUBLE NOT NULL,
+  data_source VARCHAR(120) NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_store_coordinate_name (store_name),
+  INDEX idx_store_coordinate_name (store_name)
+);
+
+CREATE TABLE IF NOT EXISTS store_pair_distance (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  store_from VARCHAR(300) NOT NULL,
+  store_to VARCHAR(300) NOT NULL,
+  distance_km DOUBLE NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_store_pair_from_to (store_from, store_to)
 );
 
 CREATE TABLE IF NOT EXISTS compare_result (

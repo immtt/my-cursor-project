@@ -41,6 +41,7 @@ class ManualRoute(Base):
     est_distance = Column(Float, nullable=True)
     est_duration = Column(Integer, nullable=True)
     route_polyline = Column(Text, nullable=True)
+    delivery_store_order = Column(Text, nullable=True)
     calc_status = Column(Integer, default=0, nullable=False)
     batch_id = Column(String(64), nullable=False, default="")
     is_active = Column(Integer, nullable=False, default=1, index=True)
@@ -66,39 +67,27 @@ class StoreCoordinate(Base):
 
     __tablename__ = "store_coordinate"
 
-    id = Column(Integer, primary_key=True, index=True, comment="主键")
-    store_name = Column(
-        String(300),
-        unique=True,
-        nullable=False,
-        index=True,
-        comment="门店名称（唯一，与排线导入中拼载门店一致）",
-    )
-    longitude = Column(Float, nullable=False, comment="经度（与 Excel 坐标列一致）")
-    latitude = Column(Float, nullable=False, comment="纬度（与 Excel 坐标列一致）")
-    data_source = Column(String(120), nullable=True, comment="坐标数据来源说明（如导入文件名）")
-    created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
-    updated_at = Column(DateTime, onupdate=func.now(), comment="更新时间")
+    id = Column(Integer, primary_key=True, index=True)
+    store_name = Column(String(300), unique=True, nullable=False, index=True)
+    longitude = Column(Float, nullable=False)
+    latitude = Column(Float, nullable=False)
+    data_source = Column(String(120), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
 
 
 class StorePairDistance(Base):
-    """店间距离；region 为 Excel 工作表名，用于区分同文件内不同 sheet 的数据批次。"""
+    """店间距离（有向边：store_from → store_to）。"""
 
     __tablename__ = "store_pair_distance"
 
-    id = Column(Integer, primary_key=True, index=True, comment="主键")
-    region = Column(
-        String(80),
-        nullable=False,
-        index=True,
-        comment="Excel 工作表名称（用于区分导入批次，非地理行政区划）",
-    )
-    store_from = Column(String(300), nullable=False, comment="起点门店（对应表头「客户1」）")
-    store_to = Column(String(300), nullable=False, comment="终点门店（对应表头「客户2」）")
-    distance_km = Column(Float, nullable=False, comment="店间距离（千米）")
-    created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
+    id = Column(Integer, primary_key=True, index=True)
+    store_from = Column(String(300), nullable=False)
+    store_to = Column(String(300), nullable=False)
+    distance_km = Column(Float, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("region", "store_from", "store_to", name="uq_store_pair_region_from_to"),)
+    __table_args__ = (UniqueConstraint("store_from", "store_to", name="uq_store_pair_from_to"),)
 
 
 class CompareResult(Base):
