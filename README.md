@@ -9,6 +9,28 @@
 - `frontend/`：前端页面代码
 - `scripts/`：数据处理与运维脚本
 
+## 本地预览（浏览器打开页面）
+
+1. **终端 A — 后端**（导入、比对、结果接口；不启动则前端会报连不上 API）  
+   ```bash
+   cd backend
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   uvicorn app.main:app --reload --port 8000
+   ```
+
+2. **终端 B — 前端**  
+   ```bash
+   cd frontend
+   python3 -m http.server 5173
+   ```
+
+3. 用浏览器打开：**[http://127.0.0.1:5173](http://127.0.0.1:5173)**  
+   - 顶部导航可切换：数据导入、比对、结果等。  
+   - 路线地图：先在「比对结果」里查询出表格，再点某一行的 **「地图」**。
+
+4. 地图轨迹：确认本机已有 `frontend/amap-config.local.js`（含高德 Web Key 与安全密钥），保存后 **强制刷新** 页面（Cmd+Shift+R / Ctrl+Shift+R）。
+
 ## 启动方式
 
 ### 后端（FastAPI）
