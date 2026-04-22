@@ -1,10 +1,11 @@
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
 from app.services.gaode_service import (
     build_markers,
+    decode_route_polyline,
     ensure_route_for_manual_row,
     ensure_route_for_sys_suggest,
     manual_store_visit_sequence,
@@ -39,20 +40,27 @@ def _side_manual(db: Session, row: Optional[ManualRoute]) -> dict:
         return {"available": False, "polyline": None, "path": None, "markers": [], "visit_order": None}
     visit = manual_store_visit_sequence(row.stores, row.delivery_store_order)
     markers = build_markers(row.warehouse_name, row.stores, db, store_visit_order=visit)
-    if row.calc_status != 1:
+    stores = [s.strip() for s in (row.stores or "").split(",") if s.strip()]
+    if not stores:
         return {
             "available": False,
             "polyline": None,
             "path": None,
             "markers": markers,
-            "visit_order": visit,
+            "visit_order": [],
         }
-    path = map_path_from_markers(markers)
+    path: Optional[List[List[float]]] = None
+    if row.route_polyline:
+        cached = decode_route_polyline(row.route_polyline)
+        if cached and len(cached) >= 2:
+            path = cached
     if not path:
-        ok, path = ensure_route_for_manual_row(db, row)
-        path = path if ok else None
+        path = map_path_from_markers(markers)
+    if not path and row.calc_status == 1:
+        ok, path2 = ensure_route_for_manual_row(db, row)
+        path = path2 if ok else None
     return {
-        "available": bool(path),
+        "available": bool(path and len(path) >= 2),
         "polyline": None,
         "path": path,
         "markers": markers,

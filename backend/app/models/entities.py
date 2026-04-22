@@ -50,7 +50,13 @@ class ManualRoute(Base):
     delivery_store_order = Column(Text, nullable=True, comment="配送途经门店顺序 JSON（补算成功时写入）")
     calc_status = Column(Integer, default=0, nullable=False, comment="补算状态：0 未成功/待算，1 成功，2 失败")
     batch_id = Column(String(64), nullable=False, default="", comment="导入批次 ID")
-    is_active = Column(Integer, nullable=False, default=1, index=True, comment="是否当前有效（1=有效）")
+    is_active = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        index=True,
+        comment="是否当前有效（1=有效；同日内非本批导入为 0）",
+    )
     import_operator = Column(String(64), nullable=True, comment="导入操作人")
     imported_at = Column(DateTime, nullable=True, comment="导入时间")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")

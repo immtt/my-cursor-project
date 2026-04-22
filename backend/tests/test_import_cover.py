@@ -101,6 +101,127 @@ def _create_system_excel_three_dates(path: str):
     wb.save(path)
 
 
+def _seed_sys_suggest(
+    db_session, waybill: str, route_d: date, volume: float = 1.0, batch_id: str = "pre"
+) -> None:
+    db_session.add(
+        SysSuggest(
+            route_date=route_d,
+            waybill_no=waybill,
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="某门店",
+            vehicle_type="4.2米标箱",
+            volume=volume,
+            load_rate=70.0,
+            est_distance=10.0,
+            est_duration=30,
+            batch_id=batch_id,
+            is_active=1,
+        )
+    )
+    db_session.commit()
+
+
+def _seed_manual_route(
+    db_session, waybill: str, route_d: date, volume: float = 1.0, batch_id: str = "pre"
+) -> None:
+    db_session.add(
+        ManualRoute(
+            route_date=route_d,
+            waybill_no=waybill,
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="某门店",
+            vehicle_type="4.2米标箱",
+            volume=volume,
+            load_rate=70.0,
+            batch_id=batch_id,
+            is_active=1,
+            calc_status=0,
+        )
+    )
+    db_session.commit()
+
+
+def test_import_marks_same_day_other_system_rows_inactive(db_session):
+    d = date(2026, 4, 20)
+    _seed_sys_suggest(db_session, "OLD_WB", d)
+    path = os.path.join(tempfile.gettempdir(), "sys_replace_day.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(
+        [d, "NEW_WB", "线路A", "仓库1", "门店甲", "4.2米标箱", 2.0, "70%", 30, 60],
+    )
+    wb.save(path)
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["same_day_deactivated"] == 1
+    old = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "OLD_WB")
+        .one()
+    )
+    assert old.is_active == 0
+    new = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "NEW_WB")
+        .one()
+    )
+    assert new.is_active == 1
+
+
+def test_import_marks_same_day_other_manual_rows_inactive(db_session):
+    d = date(2026, 4, 22)
+    _seed_manual_route(db_session, "OLDM", d)
+    path = os.path.join(tempfile.gettempdir(), "man_replace_day.xlsx")
+    _create_manual_excel(path)
+    # 覆盖 2026-04-22 的运单为 M001（与 _create_manual_excel 一致），OLDM 应被置 0
+    out = import_excel(db_session, "manual", path, operator="t")
+    assert out["success_rows"] == 1
+    assert out["same_day_deactivated"] == 1
+    old = (
+        db_session.query(ManualRoute)
+        .filter(ManualRoute.route_date == d, ManualRoute.waybill_no == "OLDM")
+        .one()
+    )
+    assert old.is_active == 0
+    cur = (
+        db_session.query(ManualRoute)
+        .filter(ManualRoute.route_date == d, ManualRoute.waybill_no == "M001")
+        .one()
+    )
+    assert cur.is_active == 1
+
+
+def test_manual_import_does_not_touch_system_rows_on_same_date(db_session):
+    d = date(2026, 4, 22)
+    _seed_sys_suggest(db_session, "SYSX", d)
+    path = os.path.join(tempfile.gettempdir(), "man_only.xlsx")
+    _create_manual_excel(path)
+    out = import_excel(db_session, "manual", path, operator="t")
+    assert out["same_day_deactivated"] == 0
+    sys_row = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "SYSX")
+        .one()
+    )
+    assert sys_row.is_active == 1
+
+
 def test_import_upserts_same_waybill_and_route_date(db_session):
     file_a = os.path.join(tempfile.gettempdir(), "sys_a.xlsx")
     file_b = os.path.join(tempfile.gettempdir(), "sys_b.xlsx")

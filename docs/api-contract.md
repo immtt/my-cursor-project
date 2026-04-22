@@ -30,11 +30,12 @@
   "total_rows": 100,
   "success_rows": 96,
   "failed_rows": 4,
-  "errors": [{"row": 8, "reason": "配送体积不能为负数"}]
+  "errors": [{"row": 8, "reason": "配送体积不能为负数"}],
+  "same_day_deactivated": 3
 }
 ```
 
-**去重策略**：同一 `dataset_type` 下，以 **`route_date` + 运单号（`waybill_no`）** 为业务键；已存在则 **更新** 该行（`batch_id` / `import_operator` / `imported_at` 随本次导入刷新），不存在则 **新增**。未出现在本次 Excel 中的运单 **不会** 被删除或置为失效。
+**去重与当日快照**：同一 `dataset_type` 下，以 **`route_date` + 运单号（`waybill_no`）** 为业务键；已存在则 **更新** 该行（`batch_id` / `import_operator` / `imported_at` 随本次导入刷新），不存在则 **新增**。**导入成功且本批有有效行时**，对**本次成功解析到的各排线日期**分别：将该日期下、未出现在**本批 Excel** 中的运单行 `is_active` 置为 **0**（删除标记，仅**系统表 / 手工表**各自处理，不跨表）。`same_day_deactivated` 为本次被置 0 的总行数（可含多日期之和）。
 
 **本批导入行查询**（与模板同类：**独立路径** `/import-batch`，勿用 `/import/rows`；实现放在 **`app/main.py`** 与 `/health` 同应用，避免进程未重载时缺路由）：
 

@@ -4,7 +4,6 @@ import difflib
 import hashlib
 import json
 import math
-import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -12,32 +11,22 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import amap_rest_enabled, settings
-from app.models.entities import AddressCache, GaodeCalcFailureLog, ManualRoute, StoreCoordinate, SysSuggest
+from app.models.entities import (
+    AddressCache,
+    GaodeCalcFailureLog,
+    ManualRoute,
+    StoreCoordinate,
+    StorePairDistance,
+    SysSuggest,
+)
 
 _AMAP_BASE = "https://restapi.amap.com/v3"
 _HTTPX_TIMEOUT = 20.0
 
-# region agent log
-_AGENT_DEBUG_LOG = "/Users/doriswu/Desktop/智能排线项目/.cursor/debug-46831c.log"
-
-
-def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        payload = {
-            "sessionId": "46831c",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-# endregion agent log
+# 写死：指定始发仓经纬度 (经度, 纬度)，优先于 `store_coordinate` / 缓存 / 高德
+_HARDCODED_WAREHOUSE_LNGLAT: Dict[str, Tuple[float, float]] = {
+    "丰树肥西现代综合产业园": (117.091383, 31.647485),
+}
 
 
 def _mock_geocode(address_name: str) -> tuple[float, float]:
@@ -66,6 +55,37 @@ def _row_lnglat_from_store_table(db: Session, store_name: str) -> Optional[Tuple
     if row:
         return row.longitude, row.latitude
     return None
+
+
+def pair_km_from_store_pair_table(db: Session, store_a: str, store_b: str) -> Optional[float]:
+    """
+    店间距离：只认 `store_pair_distance` 一条有向边或反向边，不重复累加双向。
+    同时存在 A→B 与 B→A 时取较小 km（同一无向边只计一次距离）。
+    """
+    a = (store_a or "").strip()
+    b = (store_b or "").strip()
+    if not a or not b:
+        return None
+    if a == b:
+        return 0.0
+    qf = (
+        db.query(StorePairDistance)
+        .filter(StorePairDistance.store_from == a, StorePairDistance.store_to == b)
+        .first()
+    )
+    qr = (
+        db.query(StorePairDistance)
+        .filter(StorePairDistance.store_from == b, StorePairDistance.store_to == a)
+        .first()
+    )
+    vals: List[float] = []
+    if qf is not None and qf.distance_km is not None:
+        vals.append(float(qf.distance_km))
+    if qr is not None and qr.distance_km is not None:
+        vals.append(float(qr.distance_km))
+    if not vals:
+        return None
+    return min(vals)
 
 
 def _amap_signed_params(extra: dict) -> dict:
@@ -160,6 +180,8 @@ def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[fl
     label = (label or "").strip()
     if not label:
         raise ValueError("address is empty")
+    if kind == "warehouse" and label in _HARDCODED_WAREHOUSE_LNGLAT:
+        return _HARDCODED_WAREHOUSE_LNGLAT[label]
     xy = _row_lnglat_from_store_table(db, label)
     if xy:
         return xy
@@ -212,6 +234,21 @@ def _visit_stores_csv_order(
     return out
 
 
+def _parse_lnglat_semicolon_list(raw: str) -> List[List[float]]:
+    """高德 polyline: `lng,lat;lng,lat;...`"""
+    pts: List[List[float]] = []
+    for part in (raw or "").split(";"):
+        part = part.strip()
+        if not part or "," not in part:
+            continue
+        a, b = part.split(",", 1)
+        try:
+            pts.append([round(float(a), 6), round(float(b), 6)])
+        except ValueError:
+            continue
+    return pts
+
+
 def _parse_amap_step_points(steps: list) -> List[List[float]]:
     pts: List[List[float]] = []
     for st in steps or []:
@@ -228,9 +265,29 @@ def _parse_amap_step_points(steps: list) -> List[List[float]]:
     return pts
 
 
+def _parse_amap_tmc_step_points(steps: list) -> List[List[float]]:
+    """部分返回中形状点在 `steps[].tmcs[].polyline`。"""
+    pts: List[List[float]] = []
+    for st in steps or []:
+        for t in st.get("tmcs") or []:
+            if not isinstance(t, dict):
+                continue
+            extra = _parse_lnglat_semicolon_list(str(t.get("polyline") or ""))
+            if extra:
+                if pts and extra and pts[-1] == extra[0]:
+                    pts.extend(extra[1:])
+                else:
+                    pts.extend(extra)
+    return pts
+
+
 def _amap_driving_leg(
     origin: Tuple[float, float], destination: Tuple[float, float]
 ) -> Tuple[float, float, List[List[float]]]:
+    """
+    高德驾车 v3 `direction/driving`：paths[].distance 为**米**、duration 为**秒**（官方文档）。
+    返回 (dist_m, dur_s, polyline_points)，供本模块内部再累加为米/秒后，再换算为 km/分钟写入库。
+    """
     o = f"{origin[0]},{origin[1]}"
     d = f"{destination[0]},{destination[1]}"
     data = _amap_get("direction/driving", {"origin": o, "destination": d, "extensions": "all"})
@@ -240,11 +297,57 @@ def _amap_driving_leg(
     paths = route.get("paths") or []
     if not paths:
         raise ValueError("amap no paths")
-    p0 = paths[0]
+    # 多路径时取规划距离最短的方案（同一起终点）
+    p0 = min(paths, key=lambda p: float(p.get("distance") or 0))
     dist_m = float(p0.get("distance") or 0)
     dur_s = float(p0.get("duration") or 0)
-    pts = _parse_amap_step_points(p0.get("steps") or [])
+    step_list = p0.get("steps") or []
+    pts = _parse_amap_step_points(step_list)
+    if not pts:
+        pts = _parse_amap_tmc_step_points(step_list)
+    if not pts:
+        pts = _parse_lnglat_semicolon_list(str(p0.get("polyline") or ""))
     return dist_m, dur_s, pts
+
+
+def _driving_path_points_from_path_dict(p0: dict) -> List[List[float]]:
+    """从 paths[] 中一条方案解析道路折线点（与 `_amap_driving_leg` 一致）。"""
+    step_list = p0.get("steps") or []
+    pts = _parse_amap_step_points(step_list)
+    if not pts:
+        pts = _parse_amap_tmc_step_points(step_list)
+    if not pts:
+        pts = _parse_lnglat_semicolon_list(str(p0.get("polyline") or ""))
+    return pts
+
+
+def _amap_driving_through_ordered_stops(
+    coords: List[Tuple[float, float]]
+) -> List[List[float]]:
+    """
+    起点 → 按序途经点 → 终点，一次 direction/driving（waypoints），折线走道路、避免多段仅两点直线回退。
+    至少 2 个坐标；2 个时等价于单段规划。
+    """
+    if len(coords) < 2:
+        return []
+    o = f"{coords[0][0]},{coords[0][1]}"
+    d = f"{coords[-1][0]},{coords[-1][1]}"
+    params: dict = {
+        "origin": o,
+        "destination": d,
+        "extensions": "all",
+    }
+    if len(coords) > 2:
+        params["waypoints"] = ";".join(f"{c[0]},{c[1]}" for c in coords[1:-1])
+    data = _amap_get("direction/driving", params)
+    if str(data.get("status")) != "1":
+        raise ValueError(data.get("info") or "amap direction failed")
+    route = data.get("route") or {}
+    paths = route.get("paths") or []
+    if not paths:
+        raise ValueError("amap no paths")
+    p0 = min(paths, key=lambda p: float(p.get("distance") or 0))
+    return _driving_path_points_from_path_dict(p0)
 
 
 def driving_polyline_chain(coords: List[Tuple[float, float]]) -> List[List[float]]:
@@ -272,16 +375,40 @@ def map_path_from_markers(markers: List[dict]) -> Optional[List[List[float]]]:
         return None
     try:
         coords = [(float(m["lng"]), float(m["lat"])) for m in markers]
+        if len(coords) >= 2:
+            pts = _amap_driving_through_ordered_stops(coords)
+            if pts and len(pts) >= 2:
+                return pts
         pts = driving_polyline_chain(coords)
         return pts if len(pts) >= 2 else None
     except (httpx.HTTPError, ValueError, TypeError, KeyError):
         return None
 
 
+def _merge_polyline(merged: List[List[float]], new_pts: List[List[float]]) -> None:
+    if not new_pts:
+        return
+    if merged and merged[-1] == new_pts[0]:
+        merged.extend(new_pts[1:])
+    else:
+        merged.extend(new_pts)
+
+
+def _table_leg_speed_kmh() -> float:
+    """店间表距离对应的平均时速（与 estimate_route 35km/h 量级一致）。"""
+    return 40.0
+
+
 def estimate_manual_route_amap(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[float, int, List[List[float]], List[str]]:
-    """高德驾车路径串联；途经顺序与导入「拼载门店」CSV 一致（非最近邻重排）。返回 (km, 分钟, 折线点, 门店顺序)。"""
+    """
+    混合里程：首段 仓→首店 仅高德驾车，路径取多方案距离最短；后续店间优先 `store_pair_distance`
+   （正/反取一条、并存取较小 km），表缺失时该段回退高德；全程顺序同导入 CSV。
+
+    返回与库表一致：**总里程 dist 千米(km)，总时效 dur 分钟**。
+    内部用 total_m(米)、total_s(秒) 累加，再 dist_km=total_m/1000、dur_min=round(total_s/60)。
+    """
     w_xy = resolve_lnglat_for_manual(db, warehouse, kind="warehouse")
     coord_map: Dict[str, Tuple[float, float]] = {}
     for s in stores:
@@ -289,89 +416,62 @@ def estimate_manual_route_amap(
     visit_stores = _visit_stores_csv_order(stores, coord_map)
     if not visit_stores:
         return 0.0, 0, [], []
-    total_m = 0.0
-    total_s = 0.0
+    total_m = 0.0  # 米（高德 + 表距离换算）
+    total_s = 0.0  # 秒：高德段用接口 duration；表距离段按 40km/h 粗算
     merged: List[List[float]] = []
-    legs_metrics: List[dict] = []
-    cur = w_xy
-    for sn in visit_stores:
-        nxt = coord_map[sn]
-        dm, ds, leg_pts = _amap_driving_leg(cur, nxt)
-        legs_metrics.append(
-            {
-                "to_store": sn[:60],
-                "dist_m": round(float(dm), 2),
-                "dur_raw": round(float(ds), 2),
-            }
-        )
-        total_m += dm
-        total_s += ds
-        if leg_pts:
-            if merged and leg_pts:
-                if merged[-1] == leg_pts[0]:
-                    merged.extend(leg_pts[1:])
-                else:
-                    merged.extend(leg_pts)
+
+    # 1) 仓 → 首店：仅高德
+    s0 = visit_stores[0]
+    nxt0 = coord_map[s0]
+    dm0, ds0, leg0 = _amap_driving_leg(w_xy, nxt0)
+    total_m += dm0
+    total_s += ds0
+    if leg0:
+        _merge_polyline(merged, leg0)
+    cur = nxt0
+
+    # 2) 店间：表距离优先，缺省再高德
+    for i in range(len(visit_stores) - 1):
+        a, b = visit_stores[i], visit_stores[i + 1]
+        d_km = pair_km_from_store_pair_table(db, a, b)
+        dest = coord_map[b]
+        if d_km is not None and d_km >= 0:
+            seg_m = float(d_km) * 1000.0
+            total_m += seg_m
+            v40 = _table_leg_speed_kmh()
+            # 表只存 km，无秒；按均速 40km/h 得到该段秒数，与高德秒数可加总
+            total_s += (float(d_km) / v40) * 3600.0
+            il = _interpolate_leg(cur, dest)
+            if il:
+                _merge_polyline(merged, il)
+        else:
+            dm, ds, lpts = _amap_driving_leg(cur, dest)
+            total_m += dm
+            total_s += ds
+            if lpts:
+                _merge_polyline(merged, lpts)
             else:
-                merged.extend(leg_pts)
-        cur = nxt
-    dur_min = max(1, int(round(total_s / 60)))
+                il = _interpolate_leg(cur, dest)
+                if il:
+                    _merge_polyline(merged, il)
+        cur = dest
+
+    # 对外：千米、分钟（与 manual_route.est_distance / est_duration 一致）
+    dur_min = max(1, int(round(total_s / 60.0)))
     dist_km = round(total_m / 1000.0, 2)
-    # region agent log
-    _agent_debug_log(
-        "H1-H3",
-        "gaode_service:estimate_manual_route_amap",
-        "amap_chain_totals",
-        {
-            "warehouse": (warehouse or "")[:80],
-            "visit_store_count": len(visit_stores),
-            "legs": legs_metrics,
-            "total_m": round(total_m, 2),
-            "total_s_raw_sum": round(total_s, 2),
-            "dist_km": dist_km,
-            "dur_min": dur_min,
-            "w_xy": [round(w_xy[0], 5), round(w_xy[1], 5)],
-        },
-    )
-    # endregion agent log
     return dist_km, dur_min, merged, visit_stores
 
 
 def estimate_bundle_for_manual(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[Tuple[float, int, List[List[float]]], List[str]]:
-    amap_on = amap_rest_enabled()
-    if amap_on:
+    if amap_rest_enabled():
         try:
             dist, dur, path, order = estimate_manual_route_amap(db, warehouse, stores)
-            # region agent log
-            _agent_debug_log(
-                "H4",
-                "gaode_service:estimate_bundle_for_manual",
-                "branch_amap_success",
-                {"amap_on": True, "dist": dist, "dur": dur, "store_count": len(stores)},
-            )
-            # endregion agent log
             return (dist, dur, path), order
-        except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
-            # region agent log
-            _agent_debug_log(
-                "H4",
-                "gaode_service:estimate_bundle_for_manual",
-                "branch_amap_exception_fallback",
-                {"amap_on": True, "exc_type": type(exc).__name__, "exc_msg": str(exc)[:300]},
-            )
-            # endregion agent log
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
             pass
     dist, dur, path = estimate_route(warehouse, stores, db)
-    # region agent log
-    _agent_debug_log(
-        "H4",
-        "gaode_service:estimate_bundle_for_manual",
-        "branch_estimate_route_fallback",
-        {"amap_on": amap_on, "dist": dist, "dur": dur, "store_count": len(stores)},
-    )
-    # endregion agent log
     return (dist, dur, path), list(stores)
 
 
@@ -379,8 +479,11 @@ def get_or_create_coord(db: Session, address_name: str, address_type: str):
     """地图/模拟路径取点：门店与补算一致，走门店主数据表精确/相似名 + 缓存 + 高德 + 模拟；仓库不走门店相似匹配。"""
     if not address_name:
         raise ValueError("address is empty")
+    wh_name = address_name.strip()
     if address_type == "store":
-        return resolve_lnglat_for_manual(db, address_name, kind="store")
+        return resolve_lnglat_for_manual(db, wh_name, kind="store")
+    if wh_name in _HARDCODED_WAREHOUSE_LNGLAT:
+        return _HARDCODED_WAREHOUSE_LNGLAT[wh_name]
     cached = db.query(AddressCache).filter(AddressCache.address_name == address_name).first()
     if cached:
         return cached.longitude, cached.latitude
@@ -422,6 +525,21 @@ def decode_route_polyline(raw: Optional[str]) -> Optional[List[List[float]]]:
     return None
 
 
+def _haversine_km(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
+    """两经纬度点球面大圆距离（km），用于无高德时的里程估算。"""
+    r = 6371.0
+    rad = lambda d: (d * math.pi) / 180
+    dlat = rad(lat2 - lat1)
+    dlng = rad(lng2 - lng1)
+    a = (
+        math.sin(dlat / 2) * math.sin(dlat / 2)
+        + math.cos(rad(lat1)) * math.cos(rad(lat2)) * math.sin(dlng / 2) * math.sin(dlng / 2)
+    )
+    aa = min(1.0, max(0.0, a))
+    c = 2 * math.atan2(math.sqrt(aa), math.sqrt(max(1e-12, 1 - aa)))
+    return r * c
+
+
 def _interpolate_leg(p0: Tuple[float, float], p1: Tuple[float, float], steps: int = 8) -> List[List[float]]:
     """分段插值并略作侧向偏移，避免呈现为两点直线（开发环境模拟道路级折线）。"""
     lng0, lat0 = p0
@@ -442,21 +560,42 @@ def _interpolate_leg(p0: Tuple[float, float], p1: Tuple[float, float], steps: in
 def estimate_route(
     warehouse: str, stores: List[str], db: Session
 ) -> Tuple[float, int, List[List[float]]]:
-    nodes: List[Tuple[float, float]] = [get_or_create_coord(db, warehouse, "warehouse")]
+    """
+    无高德时：仓→首店为球面距离；店间优先 `store_pair_distance`（同 amap 混合规则），
+    缺表再球面。顺序与 `visit_stores` 一致，每段店间只计一次。
+
+    返回 (**千米**, **分钟**, 折线点)，与 `sys_suggest` / `manual_route` 的里程、时效单位一致。
+    """
+    w_xy = get_or_create_coord(db, warehouse, "warehouse")
+    coord_map: Dict[str, Tuple[float, float]] = {}
     for store in stores:
-        nodes.append(get_or_create_coord(db, store, "store"))
-    total_dist = 0.0
-    for i in range(len(nodes) - 1):
-        lng_a, lat_a = nodes[i]
-        lng_b, lat_b = nodes[i + 1]
-        total_dist += abs(lng_b - lng_a) * 111 + abs(lat_b - lat_a) * 111
+        s0 = (store or "").strip()
+        if s0 and s0 not in coord_map:
+            coord_map[s0] = get_or_create_coord(db, s0, "store")
+    visit = _visit_stores_csv_order(stores, coord_map)
+    if not visit:
+        return 0.0, 1, []
+    s0n = visit[0]
+    xy0 = coord_map[s0n]
+    total_dist = _haversine_km(w_xy[0], w_xy[1], xy0[0], xy0[1])
     path: List[List[float]] = []
-    for i in range(len(nodes) - 1):
-        seg = _interpolate_leg(nodes[i], nodes[i + 1])
-        if path:
+    seg0 = _interpolate_leg(w_xy, xy0)
+    path.extend(seg0)
+    cur = xy0
+    for i in range(len(visit) - 1):
+        a, b = visit[i], visit[i + 1]
+        nxt = coord_map[b]
+        d_km = pair_km_from_store_pair_table(db, a, b)
+        if d_km is not None and d_km >= 0:
+            total_dist += float(d_km)
+        else:
+            total_dist += _haversine_km(cur[0], cur[1], nxt[0], nxt[1])
+        seg = _interpolate_leg(cur, nxt)
+        if path and seg and path[-1] == seg[0]:
             path.extend(seg[1:])
         else:
             path.extend(seg)
+        cur = nxt
     duration = int((total_dist / 35) * 60)
     return round(total_dist, 2), max(duration, 1), path
 
@@ -482,7 +621,6 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
     failures = []
     for row in rows:
         stores = [s.strip() for s in row.stores.split(",") if s.strip()]
-        prev_d, prev_t = row.est_distance, row.est_duration
         result, retry_count, err = _estimate_manual_bundle_with_retry(row.warehouse_name, stores, db)
         if result:
             (dist, dur, path), order = result
@@ -504,21 +642,6 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
                 slng, slat = resolve_lnglat_for_manual(db, s0, kind="store")
                 sync_resolved_lnglat_to_cache_tables(db, s0, "store", slng, slat)
             updated += 1
-            # region agent log
-            _agent_debug_log(
-                "H5",
-                "gaode_service:_run_manual_backfill_for_rows",
-                "backfill_updated",
-                {
-                    "waybill_no": (row.waybill_no or "")[:32],
-                    "prev_est_distance": prev_d,
-                    "prev_est_duration": prev_t,
-                    "new_est_distance": dist,
-                    "new_est_duration": dur,
-                    "retry_count": retry_count,
-                },
-            )
-            # endregion agent log
         else:
             row.calc_status = 2
             failed += 1
@@ -534,20 +657,6 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
                     last_retry_at=datetime.now(),
                 )
             )
-            # region agent log
-            _agent_debug_log(
-                "H5",
-                "gaode_service:_run_manual_backfill_for_rows",
-                "backfill_failed",
-                {
-                    "waybill_no": (row.waybill_no or "")[:32],
-                    "prev_est_distance": prev_d,
-                    "prev_est_duration": prev_t,
-                    "retry_count": retry_count,
-                    "err": (err or "")[:300],
-                },
-            )
-            # endregion agent log
     db.commit()
     return {"updated": updated, "failed": failed, "failures": failures}
 
@@ -631,6 +740,19 @@ def ensure_route_for_sys_suggest(db: Session, row: SysSuggest) -> Tuple[bool, Op
     stores = [s.strip() for s in row.stores.split(",") if s.strip()]
     if not row.warehouse_name or not stores:
         return False, None
+    if amap_rest_enabled():
+        try:
+            mk = build_markers(row.warehouse_name, row.stores, db)
+            coords = [(float(m["lng"]), float(m["lat"])) for m in mk]
+            path = _amap_driving_through_ordered_stops(coords)
+            if not path or len(path) < 2:
+                path = driving_polyline_chain(coords)
+            if path and len(path) >= 2:
+                row.route_polyline = encode_route_polyline(path)
+                db.commit()
+                return True, path
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            db.rollback()
     cached = decode_route_polyline(row.route_polyline)
     if cached:
         return True, cached
@@ -649,6 +771,22 @@ def ensure_route_for_manual_row(db: Session, row: ManualRoute) -> Tuple[bool, Op
     stores = [s.strip() for s in row.stores.split(",") if s.strip()]
     if not row.warehouse_name or not stores:
         return False, None
+    visit = manual_store_visit_sequence(row.stores, row.delivery_store_order)
+    if amap_rest_enabled():
+        try:
+            mk = build_markers(
+                row.warehouse_name, row.stores, db, store_visit_order=visit
+            )
+            coords = [(float(m["lng"]), float(m["lat"])) for m in mk]
+            path = _amap_driving_through_ordered_stops(coords)
+            if not path or len(path) < 2:
+                path = driving_polyline_chain(coords)
+            if path and len(path) >= 2:
+                row.route_polyline = encode_route_polyline(path)
+                db.commit()
+                return True, path
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            db.rollback()
     cached = decode_route_polyline(row.route_polyline)
     if cached:
         return True, cached

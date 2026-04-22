@@ -1373,8 +1373,8 @@ function formatMarkerLngLatSuffix(m) {
   return ` <span class="route-map-ll" title="经度,纬度（与接口/库中数值一致，未做舍入）">${lng}, ${lat}</span>`;
 }
 
-/** 球面大圆距离（km），用于路线地图上站点间参考。 */
-function haversineKm(lng1, lat1, lng2, lat2) {
+/** 路线顺序卡片用：两点球面直线距离（km）。 */
+function routeMapHaversineKm(lng1, lat1, lng2, lat2) {
   const R = 6371;
   const rad = (d) => (d * Math.PI) / 180;
   const dLat = rad(lat2 - lat1);
@@ -1387,67 +1387,79 @@ function haversineKm(lng1, lat1, lng2, lat2) {
   return R * c;
 }
 
-function buildRouteMapMarkerLabelHtml(m) {
-  const n = (m.seq ?? 0) + 1;
-  const kind = m.kind === "warehouse" ? "仓库" : "门店";
-  const nm = escapeHtml(String(m.name || "").trim() || "—");
-  return `<div class="route-map-pin-label"><span class="route-map-pin-label__row"><span class="route-map-pin-label__seq">${n}</span><span class="route-map-pin-label__kind">${kind}</span></span><div class="route-map-pin-label__nm">${nm}</div></div>`;
+function formatRouteMapSegmentKm(mFrom, mTo) {
+  const a = Number(mFrom.lng);
+  const b = Number(mFrom.lat);
+  const c = Number(mTo.lng);
+  const d = Number(mTo.lat);
+  if (![a, b, c, d].every(Number.isFinite)) return null;
+  const km = routeMapHaversineKm(a, b, c, d);
+  return km < 10 ? km.toFixed(2) : km.toFixed(1);
 }
 
-function formatRouteLegDistancesHtml(sideTitle, markers) {
-  if (!markers || markers.length < 2) {
-    return `<p class="route-map-leg-panel__empty">该侧站点不足，无法分段计算距离。</p>`;
-  }
-  const sorted = [...markers].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  const whNm = (x) => escapeHtml(String(x.name || "").trim() || "—");
-  const rows = [];
-  for (let i = 1; i < sorted.length; i++) {
-    const a = sorted[i - 1];
-    const b = sorted[i];
-    const km = haversineKm(Number(a.lng), Number(a.lat), Number(b.lng), Number(b.lat));
-    const kmStr = km < 10 ? km.toFixed(2) : km.toFixed(1);
-    const legLabel =
-      i === 1
-        ? `<span class="route-map-leg-tag">仓店距离</span> ${whNm(a)} → ${whNm(b)}`
-        : `<span class="route-map-leg-tag">店间距离</span> ${whNm(a)} → ${whNm(b)}`;
-    rows.push(`<li>${legLabel}<span class="route-map-leg-km">${kmStr} km</span></li>`);
-  }
-  return `<div class="route-map-leg-panel__head">${escapeHtml(sideTitle)}</div><ul class="route-map-leg-ul">${rows.join("")}</ul><p class="route-map-leg-note">以上为站点间<strong>球面直线距离</strong>，仅供参考；实际路网以轨迹为准。</p>`;
+/** 地图 pin：仅显示序号+仓/店类型；店名见 Marker title 悬停。side 为 system|manual 用于蓝/红区分。 */
+function buildRouteMapMarkerLabelHtml(m, side) {
+  const n = (m.seq ?? 0) + 1;
+  const kind = m.kind === "warehouse" ? "仓" : "店";
+  const scls = side === "manual" ? "route-map-pin-label--manual" : "route-map-pin-label--system";
+  return `<div class="route-map-pin-label ${scls}"><span class="route-map-pin-label__row"><span class="route-map-pin-label__seq">${n}</span><span class="route-map-pin-label__kind">${kind}</span></span></div>`;
 }
 
 /**
- * 路线地图页：按运单展示送货顺序（列表为 1 起的顺序号，与地图标注一致；数据来自 /compare/route-map 的 markers，名称后附经纬度）。
+ * 路线地图页：按运单展示送货顺序（箭头串联，段间为球面直线距离；序号与地图一致，自 1 起）。
  */
-function buildRouteMapWaybillStopsSection(heading, waybillNo, markers) {
+function buildRouteMapWaybillStopsSection(heading, waybillNo, markers, side) {
+  const secCls =
+    side === "manual" ? "route-map-wb-section route-map-wb-section--manual" : "route-map-wb-section route-map-wb-section--system";
   const hasWb = waybillNo != null && String(waybillNo).trim() !== "";
   const wb = hasWb ? String(waybillNo) : "—";
   const head = `<div class="route-map-wb-head"><span class="route-map-wb-label">${escapeHtml(heading)}</span> <code class="route-map-wb-no">${escapeHtml(wb)}</code></div>`;
   if (!markers || !markers.length) {
-    return `<section class="route-map-wb-section">${head}<p class="route-map-sub">送货顺序</p><p class="empty-hint" style="padding:12px 0 0">暂无站点</p></section>`;
+    return `<section class="${secCls}">${head}<p class="route-map-sub">送货顺序</p><p class="empty-hint" style="padding:12px 0 0">暂无站点</p></section>`;
   }
   const sorted = [...markers].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  const li = sorted
-    .map((m) => {
-      const kindLabel = m.kind === "warehouse" ? "仓库" : "门店";
-      const kcls = m.kind === "warehouse" ? " route-map-kind--wh" : " route-map-kind--st";
-      const ll = formatMarkerLngLatSuffix(m);
-      return `<li><span class="route-map-kind${kcls}">${kindLabel}</span> <span class="route-map-nm">${escapeHtml(
-        m.name || "",
-      )}</span>${ll}</li>`;
-    })
-    .join("");
-  return `<section class="route-map-wb-section">${head}<p class="route-map-sub">送货顺序（与地图标注一致，自 1 起）</p><ol class="route-map-stop-ol">${li}</ol></section>`;
+  const chunks = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const m = sorted[i];
+    const n = (m.seq ?? 0) + 1;
+    const kindLabel = m.kind === "warehouse" ? "仓库" : "门店";
+    const kcls = m.kind === "warehouse" ? " route-map-kind--wh" : " route-map-kind--st";
+    const ll = formatMarkerLngLatSuffix(m);
+    chunks.push(`<div class="route-map-flow__node" role="listitem">
+      <div class="route-map-flow__node-card">
+        <div class="route-map-flow__node-head">
+          <span class="route-map-flow__seq" aria-hidden="true">${n}</span>
+          <span class="route-map-kind${kcls}">${kindLabel}</span>
+        </div>
+        <div class="route-map-flow__name">${escapeHtml(m.name || "")}</div>
+        <div class="route-map-flow__ll">${ll.trim() || '<span class="route-map-ll">—</span>'}</div>
+      </div>
+    </div>`);
+    if (i < sorted.length - 1) {
+      const kmStr = formatRouteMapSegmentKm(sorted[i], sorted[i + 1]);
+      const distHtml = kmStr != null ? `${kmStr}&nbsp;km` : "—";
+      chunks.push(`<div class="route-map-flow__connector" aria-hidden="true">
+        <span class="route-map-flow__arrow" title="途经顺序">→</span>
+        <span class="route-map-flow__dist">${distHtml}</span>
+      </div>`);
+    }
+  }
+  const flow = `<div class="route-map-flow" role="list">${chunks.join("")}</div>
+    <p class="route-map-flow-note">箭头表示配送先后；段上距离为相邻站点间<strong>球面直线距离</strong>，仅供参考。</p>`;
+  return `<section class="${secCls}">${head}<p class="route-map-sub">送货顺序（与地图标注一致，自 1 起）</p>${flow}</section>`;
 }
 
 function buildRouteMapStopsBlock(data) {
   const out = [];
   const sysM = (data.system && data.system.markers) || [];
-  const manM = (data.manual && data.manual.markers) || [];
-  if (data.sys_waybill_no != null && String(data.sys_waybill_no).trim() !== "" || sysM.length) {
-    out.push(buildRouteMapWaybillStopsSection("系统运单", data.sys_waybill_no, sysM));
+  const hasSysWb = data.sys_waybill_no != null && String(data.sys_waybill_no).trim() !== "";
+  if (hasSysWb || sysM.length) {
+    out.push(buildRouteMapWaybillStopsSection("系统运单", data.sys_waybill_no, sysM, "system"));
   }
-  if (data.manual_waybill_no != null && String(data.manual_waybill_no).trim() !== "" || manM.length) {
-    out.push(buildRouteMapWaybillStopsSection("手工运单", data.manual_waybill_no, manM));
+  const manM = (data.manual && data.manual.markers) || [];
+  const hasManWb = data.manual_waybill_no != null && String(data.manual_waybill_no).trim() !== "";
+  if (hasManWb || manM.length) {
+    out.push(buildRouteMapWaybillStopsSection("手工运单", data.manual_waybill_no, manM, "manual"));
   }
   if (!out.length) return "";
   return `<div class="route-map-stops-grid">${out.join("")}</div>`;
@@ -1457,7 +1469,7 @@ function renderRouteMap() {
   const rid = routeMapIdFromHash();
   app.innerHTML = `
     <div class="page-head">
-      <p>蓝色为系统建议路线，红色虚线为手工路线；站点旁常显仓库/门店名称。点击路线可查看该侧仓店距离与各段店间距离。</p>
+      <p>路线为高德驾车路径（起终点与途经点与送货顺序一致，贴路行驶）。可同时展示系统（蓝）与手工（红）线路。地图上仅显示顺序号；店名可鼠标悬停标点查看。</p>
     </div>
     <div class="map-layout">
       <p class="alert alert--muted" style="margin-bottom:16px;font-size:0.8rem">
@@ -1466,9 +1478,7 @@ function renderRouteMap() {
       <div id="routeMapMeta" class="map-meta"></div>
       <div id="routeMapStops" class="route-map-stops-wrap"></div>
       <div id="mapContainer"></div>
-      <div id="routeMapLegPanel" class="route-map-leg-panel" role="region" aria-label="路线分段距离">
-        <p class="route-map-leg-panel__hint">点击地图上的<strong>蓝色</strong>或<strong>红色虚线</strong>路线，查看该侧<strong>仓店距离</strong>与<strong>店间距离</strong>。</p>
-      </div>
+      <p id="routeMapPathNote" class="route-map-path-note" role="note" style="display:none"></p>
       <div id="routeMapErr"></div>
       <a class="back-link" href="#result">← 返回线路差异结果</a>
     </div>
@@ -1506,22 +1516,31 @@ function renderRouteMap() {
       volBits.push(`手工 ${escapeHtml(String(data.manual_volume))} m³`);
     }
     const volDisp = volBits.length ? volBits.join(" · ") : "—";
+    const hasSysWbMeta = data.sys_waybill_no != null && String(data.sys_waybill_no).trim() !== "";
+    const hasManWbMeta = data.manual_waybill_no != null && String(data.manual_waybill_no).trim() !== "";
+    const legendWbBlock =
+      hasSysWbMeta && hasManWbMeta
+        ? `<span><span class="map-legend-swatch map-legend-swatch--system">■</span> 系统运单</span> <span><span class="map-legend-swatch map-legend-swatch--manual">■</span> 手工运单</span>`
+        : hasSysWbMeta
+          ? `<span><span class="map-legend-swatch map-legend-swatch--system">■</span> 系统建议路线</span>`
+          : hasManWbMeta
+            ? `<span><span class="map-legend-swatch map-legend-swatch--manual">■</span> 手工运单路线</span>`
+            : `<span><span class="map-legend-swatch map-legend-swatch--system">■</span> 系统</span>`;
 
     metaEl.innerHTML = `
       <div><strong>${data.warehouse_name || "—"}</strong></div>
       <div style="margin-top:8px">${matchStatusBadge(data.match_status)} 
-        <span style="margin-left:12px;color:var(--text-secondary)">系统 <strong>${data.sys_waybill_no ?? "—"}</strong>
+        <span style="margin-left:12px;color:var(--text-secondary)">系统 <strong class="text-waybill--system">${data.sys_waybill_no ?? "—"}</strong>
           <small>（${data.sys_vehicle_type ?? "—"}）</small></span>
-        <span style="margin-left:12px;color:var(--text-secondary)">手工 <strong>${data.manual_waybill_no ?? "—"}</strong>
+        <span style="margin-left:12px;color:var(--text-secondary)">手工 <strong class="text-waybill--manual">${data.manual_waybill_no ?? "—"}</strong>
           <small>（${data.manual_vehicle_type ?? "—"}）</small></span>
       </div>
       <div class="map-meta__stats" style="margin-top:10px;font-size:0.88rem;color:var(--text-secondary);line-height:1.6">
         <span>匹配度 <strong style="color:var(--text)">${matchRateDisp}</strong></span>
         <span style="margin-left:18px">配送体积 <strong style="color:var(--text)">${volDisp}</strong></span>
       </div>
-      <div class="legend">
-        <span><span style="color:#1677FF;font-weight:700">■</span> 系统路线</span>
-        <span><span style="color:#FF4D4F;font-weight:700">■</span> 手工路线（虚线）</span>
+      <div class="legend" id="routeMapLegend">
+        ${legendWbBlock}
       </div>`;
 
     const stopsEl = document.getElementById("routeMapStops");
@@ -1558,18 +1577,46 @@ function renderRouteMap() {
       return;
     }
 
+    const pathNoteEl = document.getElementById("routeMapPathNote");
+    const legendEl = document.getElementById("routeMapLegend");
+
+    const canShowSystem =
+      data.system?.available &&
+      Array.isArray(data.system.path) &&
+      data.system.path.length >= 2;
+    const canShowManual =
+      data.manual?.available &&
+      Array.isArray(data.manual.path) &&
+      data.manual.path.length >= 2;
+    const canShowManualOnly = !canShowSystem && canShowManual;
+
+    if (pathNoteEl) {
+      pathNoteEl.style.display = "block";
+      if (canShowSystem && canShowManual) {
+        pathNoteEl.textContent =
+          "同时绘制系统（蓝）与手工（红）驾车路线。轨迹由起终点与途经点一次/分段高德驾车规划，沿道路显示。";
+      } else if (canShowSystem) {
+        pathNoteEl.textContent = "路线由高德驾车规划，沿道路显示（非起终点直线）。";
+      } else if (canShowManualOnly) {
+        pathNoteEl.textContent =
+          "本比对无系统侧轨迹或系统路径不可用，仅展示手工运单路线（驾车规划，沿道路）。";
+      } else {
+        pathNoteEl.style.display = "none";
+      }
+    }
+    if (legendEl) {
+      if (canShowSystem && canShowManual) {
+        legendEl.innerHTML = `<span><span class="map-legend-swatch map-legend-swatch--system">■</span> 系统建议路线</span> <span><span class="map-legend-swatch map-legend-swatch--manual">■</span> 手工运单路线</span>`;
+      } else if (canShowManualOnly) {
+        legendEl.innerHTML = `<span><span class="map-legend-swatch map-legend-swatch--manual">■</span> 手工运单路线</span>`;
+      }
+    }
+
     const map = new AMap.Map("mapContainer", { zoom: 11, viewMode: "2D" });
     const overlays = [];
-    const legPanelEl = document.getElementById("routeMapLegPanel");
+    const markerOverlays = [];
 
-    const bindPolylineLegClick = (polyline, sideTitle, markers) => {
-      if (!polyline || !legPanelEl) return;
-      polyline.on("click", () => {
-        legPanelEl.innerHTML = formatRouteLegDistancesHtml(sideTitle, markers);
-      });
-    };
-
-    if (data.system?.available && data.system.path?.length) {
+    if (canShowSystem) {
       const pl = new AMap.Polyline({
         path: data.system.path.map(([lng, lat]) => [lng, lat]),
         strokeColor: data.style?.system_line_color || "#1677FF",
@@ -1577,51 +1624,57 @@ function renderRouteMap() {
         strokeOpacity: 0.85,
         lineJoin: "round",
         zIndex: 50,
-        cursor: "pointer",
+        cursor: "default",
         bubble: true,
       });
       map.add(pl);
       overlays.push(pl);
-      bindPolylineLegClick(pl, "系统建议路线", data.system.markers || []);
     }
-
-    if (data.manual?.available && data.manual.path?.length) {
+    if (canShowManual) {
       const pl2 = new AMap.Polyline({
         path: data.manual.path.map(([lng, lat]) => [lng, lat]),
         strokeColor: data.style?.manual_line_color || "#FF4D4F",
-        strokeWeight: 5,
+        strokeWeight: 6,
         strokeOpacity: 0.9,
-        strokeStyle: "dashed",
         lineJoin: "round",
-        zIndex: 60,
-        cursor: "pointer",
+        zIndex: 48,
+        cursor: "default",
         bubble: true,
       });
       map.add(pl2);
       overlays.push(pl2);
-      bindPolylineLegClick(pl2, "手工路线", data.manual.markers || []);
     }
 
-    const labelSrc =
-      data.system?.markers?.length > 0 ? data.system.markers : data.manual?.markers || [];
-    labelSrc.forEach((m) => {
-      const n = (m.seq ?? 0) + 1;
-      new AMap.Marker({
-        position: [m.lng, m.lat],
-        title: `${n} ${m.name || ""}`,
-        label: {
-          content: buildRouteMapMarkerLabelHtml(m),
-          direction: "top",
-          offset: [0, 4],
-        },
-        map,
+    const addLabelMarkers = (markers, side, labelYOffset) => {
+      (markers || []).forEach((m) => {
+        const n = (m.seq ?? 0) + 1;
+        const name = (m.name && String(m.name).trim()) || "—";
+        const mk = new AMap.Marker({
+          position: [m.lng, m.lat],
+          title: `${n} ${name}`,
+          label: {
+            content: buildRouteMapMarkerLabelHtml(m, side),
+            direction: "top",
+            offset: [0, labelYOffset],
+          },
+          map,
+        });
+        markerOverlays.push(mk);
       });
-    });
+    };
+    if (canShowSystem) {
+      addLabelMarkers(data.system?.markers, "system", 4);
+    }
+    if (canShowManual) {
+      const yOff = canShowSystem ? 22 : 4;
+      addLabelMarkers(data.manual?.markers, "manual", yOff);
+    }
 
-    if (overlays.length) {
-      map.setFitView(overlays, false, [40, 40, 40, 40]);
+    const fit = [...overlays, ...markerOverlays];
+    if (fit.length) {
+      map.setFitView(fit, false, [40, 40, 40, 40]);
     } else {
-      errEl.innerHTML = `<div class="alert alert--error">当前记录无可用轨迹（可能补算未完成或缺少门店）。</div>`;
+      errEl.innerHTML = `<div class="alert alert--error">当前记录无可用轨迹（需系统或手工运单、门店及高德路线数据）。</div>`;
     }
   })();
 }

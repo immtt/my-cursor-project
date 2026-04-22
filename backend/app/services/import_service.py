@@ -1,6 +1,7 @@
 import json
 import re
 import uuid
+from collections import defaultdict
 from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
@@ -265,6 +266,40 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
             else:
                 db.add(obj)
 
+    # 各排线日期下，本文件未再出现的运单行打删除标记（is_active=0），仅本批为当前有效
+    same_day_deactivated = 0
+    if staged_records:
+        kept_by_date = defaultdict(set)
+        for obj in staged_records:
+            kept_by_date[obj.route_date].add((obj.waybill_no or "").strip())
+        for d, waybills_kept in kept_by_date.items():
+            if not waybills_kept:
+                continue
+            wb_list = [w for w in waybills_kept if w]
+            if not wb_list:
+                continue
+            if dataset_type == "system":
+                n = (
+                    db.query(SysSuggest)
+                    .filter(
+                        SysSuggest.route_date == d,
+                        SysSuggest.is_active == 1,
+                        ~SysSuggest.waybill_no.in_(wb_list),
+                    )
+                    .update({SysSuggest.is_active: 0}, synchronize_session=False)
+                )
+            else:
+                n = (
+                    db.query(ManualRoute)
+                    .filter(
+                        ManualRoute.route_date == d,
+                        ManualRoute.is_active == 1,
+                        ~ManualRoute.waybill_no.in_(wb_list),
+                    )
+                    .update({ManualRoute.is_active: 0}, synchronize_session=False)
+                )
+            same_day_deactivated += n or 0
+
     for route_date in touched_dates:
         db.add(
             ImportAuditLog(
@@ -285,6 +320,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
         "success_rows": success_rows,
         "failed_rows": total_rows - success_rows,
         "errors": errors,
+        "same_day_deactivated": same_day_deactivated,
     }
 
 

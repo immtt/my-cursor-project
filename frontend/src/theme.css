@@ -588,13 +588,13 @@ select:focus {
 }
 
 .waybill-tag--system {
-  background: #e0f2fe;
-  color: #0369a1;
+  background: #e6f4ff;
+  color: #0958d9;
 }
 
 .waybill-tag--manual {
-  background: #fef3c7;
-  color: #b45309;
+  background: #fff1f0;
+  color: #cf1322;
 }
 
 .waybill-no {
@@ -731,6 +731,27 @@ select:focus {
   color: var(--text);
 }
 
+.map-layout .text-waybill--system {
+  color: #1677ff;
+}
+
+.map-layout .text-waybill--manual {
+  color: #ff4d4f;
+}
+
+.map-layout .map-legend-swatch {
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.map-layout .map-legend-swatch--system {
+  color: #1677ff;
+}
+
+.map-layout .map-legend-swatch--manual {
+  color: #ff4d4f;
+}
+
 .map-layout .legend {
   display: inline-flex;
   align-items: center;
@@ -767,6 +788,41 @@ select:focus {
   font-size: 0.875rem;
 }
 
+/* 系统运单：蓝；手工运单：红（与地图线色一致） */
+.map-layout .route-map-wb-section--system {
+  border-left: 3px solid #1677ff;
+}
+
+.map-layout .route-map-wb-section--manual {
+  border-left: 3px solid #ff4d4f;
+}
+
+.map-layout .route-map-wb-section--system .route-map-wb-label {
+  color: #0958d9;
+}
+
+.map-layout .route-map-wb-section--manual .route-map-wb-label {
+  color: #cf1322;
+}
+
+.map-layout .route-map-wb-section--system .route-map-wb-no {
+  color: #1677ff;
+  background: #e6f4ff;
+  border: 1px solid #91caff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.82rem;
+}
+
+.map-layout .route-map-wb-section--manual .route-map-wb-no {
+  color: #cf1322;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.82rem;
+}
+
 .map-layout .route-map-wb-head {
   margin-bottom: 6px;
 }
@@ -784,6 +840,134 @@ select:focus {
   margin: 0 0 8px;
   font-size: 0.78rem;
   color: var(--text-secondary);
+}
+
+/* 路线地图：仓→店箭头流 + 段距离 */
+.map-layout .route-map-flow {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 0 2px;
+}
+
+.map-layout .route-map-flow__node {
+  flex: 0 0 auto;
+}
+
+.map-layout .route-map-flow__node-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface);
+  min-width: 11rem;
+  max-width: 18rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.map-layout .route-map-flow__node-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-layout .route-map-flow__seq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  background: #2563eb;
+  border-radius: 4px;
+}
+
+.map-layout .route-map-wb-section--system .route-map-flow__seq {
+  background: #1677ff;
+}
+
+.map-layout .route-map-wb-section--manual .route-map-flow__seq {
+  background: #ff4d4f;
+}
+
+.map-layout .route-map-flow__name {
+  margin-top: 6px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.map-layout .route-map-flow__ll {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.map-layout .route-map-flow__connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.map-layout .route-map-flow__arrow {
+  font-size: 1.15rem;
+  line-height: 1;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.map-layout .route-map-wb-section--system .route-map-flow__arrow {
+  color: #1677ff;
+}
+
+.map-layout .route-map-wb-section--manual .route-map-flow__arrow {
+  color: #ff4d4f;
+}
+
+.map-layout .route-map-flow__dist {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.map-layout .route-map-flow-note {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+@media (max-width: 639px) {
+  .map-layout .route-map-flow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .map-layout .route-map-flow__node-card {
+    max-width: none;
+  }
+
+  .map-layout .route-map-flow__connector {
+    flex-direction: row;
+    padding: 6px 0;
+    gap: 10px;
+    justify-content: center;
+  }
+
+  .map-layout .route-map-flow__arrow {
+    transform: rotate(90deg);
+  }
 }
 
 .map-layout .route-map-stop-ol {
@@ -819,6 +1003,11 @@ select:focus {
   color: #1d4ed8;
 }
 
+.map-layout .route-map-wb-section--manual .route-map-kind--wh {
+  background: #ffccc7;
+  color: #a8071a;
+}
+
 .map-layout .route-map-kind--st {
   background: #f1f5f9;
   color: #475569;
@@ -844,13 +1033,13 @@ select:focus {
   overflow: hidden;
 }
 
-/* 路线地图：常显标注（高德 label 内 HTML） */
+/* 路线地图：仅序号+仓/店，店名在 Marker title 悬停；蓝=系统/红=手工 */
 .route-map-pin-label {
-  min-width: 4.5rem;
-  max-width: 11rem;
-  padding: 4px 7px;
+  min-width: auto;
+  max-width: 6.5rem;
+  padding: 3px 6px;
   font-size: 11px;
-  line-height: 1.3;
+  line-height: 1.2;
   text-align: center;
   color: #1e293b;
   background: rgba(255, 255, 255, 0.96);
@@ -861,12 +1050,19 @@ select:focus {
   pointer-events: none;
 }
 
+.route-map-pin-label--system .route-map-pin-label__seq {
+  background: #1677ff;
+}
+
+.route-map-pin-label--manual .route-map-pin-label__seq {
+  background: #ff4d4f;
+}
+
 .route-map-pin-label__row {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin-bottom: 2px;
+  gap: 5px;
 }
 
 .route-map-pin-label__seq {
@@ -892,6 +1088,13 @@ select:focus {
   font-weight: 600;
   font-size: 11px;
   color: #0f172a;
+}
+
+.map-layout .route-map-path-note {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .map-layout .route-map-leg-panel {
