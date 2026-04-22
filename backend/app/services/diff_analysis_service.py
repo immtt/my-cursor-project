@@ -194,12 +194,14 @@ def vehicle_diff_by_type(
     warehouse_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    在排线日闭区间（及可选仓库）内，对有效运单行按「车型」分别统计
-    系统建议 / 手工排线的**车次数**（每行 1 车），与 `dataset_type` 无关，用于两侧对比。
+    在排线日闭区间（及可选仓库）内，对有效**运单行**按「车型」分组，统计
+    系统/手工侧 **运单数**（每行 1 单，与 `dataset_type` 无关）。
+
+    `system_total` / `manual_total` 为各侧**运单总数**（所有车型之和）。
     """
     wh = (warehouse_name or "").strip() or None
 
-    def _q_sys():
+    def _q_sys_groups():
         q = (
             db.query(SysSuggest.vehicle_type, func.count(SysSuggest.id))
             .filter(
@@ -212,7 +214,7 @@ def vehicle_diff_by_type(
             q = q.filter(SysSuggest.warehouse_name == wh)
         return q.group_by(SysSuggest.vehicle_type).all()
 
-    def _q_man():
+    def _q_man_groups():
         q = (
             db.query(ManualRoute.vehicle_type, func.count(ManualRoute.id))
             .filter(
@@ -226,12 +228,12 @@ def vehicle_diff_by_type(
         return q.group_by(ManualRoute.vehicle_type).all()
 
     m_sys: Dict[str, int] = {}
-    for vt, n in _q_sys():
+    for vt, n in _q_sys_groups():
         label = _vehicle_type_label(vt)
         m_sys[label] = m_sys.get(label, 0) + int(n or 0)
 
     m_man: Dict[str, int] = {}
-    for vt, n in _q_man():
+    for vt, n in _q_man_groups():
         label = _vehicle_type_label(vt)
         m_man[label] = m_man.get(label, 0) + int(n or 0)
 
@@ -259,6 +261,104 @@ def vehicle_diff_by_type(
     }
 
 
+def store_diff_summary(
+    db: Session,
+    route_date_from: date,
+    route_date_to: date,
+    warehouse_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    配送**门店差异**：在相同区间与仓库下，将各运单 `stores` 展开后按名去重，
+    分别统计系统侧、手工侧涉及的**不重复门店数**；用于对照运单/车辆数变化与配送面变化。
+
+    与 `vehicle_diff` 独立：此处只看「店」，不区分车型。
+    """
+    wh = (warehouse_name or "").strip() or None
+    sys_stores: Set[str] = set()
+    man_stores: Set[str] = set()
+
+    q_sys = db.query(SysSuggest).filter(
+        SysSuggest.is_active == 1,
+        SysSuggest.route_date >= route_date_from,
+        SysSuggest.route_date <= route_date_to,
+    )
+    if wh:
+        q_sys = q_sys.filter(SysSuggest.warehouse_name == wh)
+    for row in q_sys.all():
+        for store in normalize_stores(row.stores or ""):
+            sys_stores.add(store)
+
+    q_man = db.query(ManualRoute).filter(
+        ManualRoute.is_active == 1,
+        ManualRoute.route_date >= route_date_from,
+        ManualRoute.route_date <= route_date_to,
+    )
+    if wh:
+        q_man = q_man.filter(ManualRoute.warehouse_name == wh)
+    for row in q_man.all():
+        for store in normalize_stores(row.stores or ""):
+            man_stores.add(store)
+
+    sc = len(sys_stores)
+    mc = len(man_stores)
+    only_in_system = sorted(sys_stores - man_stores)
+    only_in_manual = sorted(man_stores - sys_stores)
+    return {
+        "system_store_count": sc,
+        "manual_store_count": mc,
+        "diff": sc - mc,
+        "only_in_system": only_in_system,
+        "only_in_manual": only_in_manual,
+    }
+
+
+def _vehicle_store_trend_by_day(
+    db: Session,
+    route_date_from: date,
+    route_date_to: date,
+    warehouse_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    按日：与车辆差异 / 门店差异同口径。每日系统/手工的运单行数、以及当日拼载门店去重数。
+    供前端在一张图内画「运单 + 门店」四序列趋势（双纵轴）。
+    """
+    wh = (warehouse_name or "").strip() or None
+    series: List[Dict[str, Any]] = []
+    for d in _date_range_inclusive(route_date_from, route_date_to):
+        q_sys = db.query(SysSuggest).filter(
+            SysSuggest.is_active == 1, SysSuggest.route_date == d
+        )
+        if wh:
+            q_sys = q_sys.filter(SysSuggest.warehouse_name == wh)
+        sys_rows = q_sys.all()
+        sys_st: Set[str] = set()
+        for row in sys_rows:
+            for store in normalize_stores(row.stores or ""):
+                sys_st.add(store)
+
+        q_man = db.query(ManualRoute).filter(
+            ManualRoute.is_active == 1, ManualRoute.route_date == d
+        )
+        if wh:
+            q_man = q_man.filter(ManualRoute.warehouse_name == wh)
+        man_rows = q_man.all()
+        man_st: Set[str] = set()
+        for row in man_rows:
+            for store in normalize_stores(row.stores or ""):
+                man_st.add(store)
+
+        series.append(
+            {
+                "route_date": d.isoformat(),
+                "system_waybill_count": len(sys_rows),
+                "manual_waybill_count": len(man_rows),
+                "system_store_count": len(sys_st),
+                "manual_store_count": len(man_st),
+            }
+        )
+    return series
+
+
 def _trend_by_day(
     db: Session,
     route_date_from: date,
@@ -280,6 +380,83 @@ def _trend_by_day(
             }
         )
     return series
+
+
+def _waybill_vehicle_label(vehicle_type: Optional[str]) -> str:
+    s = (vehicle_type or "").strip()
+    return s if s else "（未填）"
+
+
+def waybill_store_load(
+    db: Session,
+    route_date_from: date,
+    route_date_to: date,
+    dataset_type: str,
+    warehouse_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    在日期区间 + 仓库下，按运单行统计「拼载门店」去重个数（与 normalize_stores 一致），
+    并给出单均配载门店数。随 dataset_type 只含对应侧运单；all 时两侧都列并带 dataset_type。
+    """
+    if dataset_type not in {"all", "system", "manual"}:
+        raise ValueError("dataset_type must be all | system | manual")
+    wh = (warehouse_name or "").strip() or None
+    items: List[Dict[str, Any]] = []
+    for d in _date_range_inclusive(route_date_from, route_date_to):
+        if dataset_type in ("all", "system"):
+            for r in _query_sys_suggest_for_day(db, d, wh).all():
+                wb = (r.waybill_no or "").strip()
+                if not wb:
+                    continue
+                n = len(normalize_stores(r.stores or ""))
+                items.append(
+                    {
+                        "route_date": d.isoformat(),
+                        "waybill_no": wb,
+                        "dataset_type": "system",
+                        "vehicle_type": _waybill_vehicle_label(
+                            getattr(r, "vehicle_type", None)
+                        ),
+                        "store_count": n,
+                    }
+                )
+        if dataset_type in ("all", "manual"):
+            for r in _query_manual_route_for_day(db, d, wh).all():
+                wb = (r.waybill_no or "").strip()
+                if not wb:
+                    continue
+                n = len(normalize_stores(r.stores or ""))
+                items.append(
+                    {
+                        "route_date": d.isoformat(),
+                        "waybill_no": wb,
+                        "dataset_type": "manual",
+                        "vehicle_type": _waybill_vehicle_label(
+                            getattr(r, "vehicle_type", None)
+                        ),
+                        "store_count": n,
+                    }
+                )
+    items.sort(
+        key=lambda x: (x["route_date"], x["dataset_type"], x["waybill_no"])
+    )
+
+    def _avg(rows: List[Dict[str, Any]]) -> float:
+        if not rows:
+            return 0.0
+        return round(sum(x["store_count"] for x in rows) / len(rows), 2)
+
+    sys_rows = [x for x in items if x["dataset_type"] == "system"]
+    man_rows = [x for x in items if x["dataset_type"] == "manual"]
+    summary = {
+        "waybill_count": len(items),
+        "avg_store_count": _avg(items),
+        "system_waybill_count": len(sys_rows),
+        "system_avg_store_count": _avg(sys_rows),
+        "manual_waybill_count": len(man_rows),
+        "manual_avg_store_count": _avg(man_rows),
+    }
+    return {"summary": summary, "items": items}
 
 
 def list_multi_vehicle_stores(
@@ -311,9 +488,19 @@ def list_multi_vehicle_stores(
         db, route_date_from, route_date_to
     )
     vehicle_diff = vehicle_diff_by_type(db, route_date_from, route_date_to, wh)
+    store_diff = store_diff_summary(db, route_date_from, route_date_to, wh)
+    vehicle_store_trend_by_day = _vehicle_store_trend_by_day(
+        db, route_date_from, route_date_to, wh
+    )
+    wb_load = waybill_store_load(
+        db, route_date_from, route_date_to, dataset_type, wh
+    )
     return {
         "items": all_items,
         "trend_by_day": trend_by_day,
+        "vehicle_store_trend_by_day": vehicle_store_trend_by_day,
+        "waybill_store_load": wb_load,
         "warehouse_options": warehouse_options,
         "vehicle_diff": vehicle_diff,
+        "store_diff": store_diff,
     }

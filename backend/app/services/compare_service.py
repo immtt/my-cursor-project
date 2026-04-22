@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional, Tuple
+from datetime import date
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -112,6 +113,42 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
 
     db.commit()
     return inserted
+
+
+def refresh_compare_after_import(
+    db: Session,
+    touched_route_dates: List[date],
+    match_threshold: float = 0.5,
+) -> Dict[str, Any]:
+    """
+    导入落库后：在排线日闭包区间内对手工行补算，再**仅**对所涉排线日逐日重算比对，使 compare_result 与基础表一致。
+    与 /compare/run 中对手工补算 + 按日 run_compare 一致，但按日更省（只跑 touched 日）。
+    """
+    if not touched_route_dates:
+        return {
+            "compare_dates_run": [],
+            "compare_result_rows": 0,
+            "calc": None,
+        }
+    unique = sorted({d for d in touched_route_dates if d is not None})
+    if not unique:
+        return {
+            "compare_dates_run": [],
+            "compare_result_rows": 0,
+            "calc": None,
+        }
+    d0, d1 = unique[0], unique[-1]
+    from app.services.gaode_service import backfill_manual_routes_by_date_window
+
+    calc = backfill_manual_routes_by_date_window(db, d0, d1)
+    total_ins = 0
+    for d in unique:
+        total_ins += run_compare(db, d, match_threshold)
+    return {
+        "compare_dates_run": [x.isoformat() for x in unique],
+        "compare_result_rows": total_ins,
+        "calc": calc,
+    }
 
 
 def warehouse_options_for_route_date(db: Session, route_date) -> List[str]:

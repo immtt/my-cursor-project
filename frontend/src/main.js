@@ -35,6 +35,397 @@ const IMPORT_LIST_RANGE_FROM_KEY = "smart_route_data_list_from";
 const IMPORT_LIST_RANGE_TO_KEY = "smart_route_data_list_to";
 const IMPORT_LIST_STORE_KEY = "smart_route_import_list_store";
 
+/** 由 renderResult / renderDiffAnalysis 挂接；导入成功后仅刷新展示（后台已重算比对）。 */
+let _refetchCompareDisplayOnly = null;
+let _refetchDiffAnalysis = null;
+
+/** 门店差异列表（仅一侧有）客户端分页用 */
+let _diffAnalysisStoreListSnapshot = null;
+const DIFF_STORE_LIST_DEFAULT_PAGE_SIZE = 20;
+const DIFF_STORE_LIST_PAGE_SIZES = [20, 50];
+
+function _normalizedStoreDiffArrays(sd) {
+  const onlySys = Array.isArray(sd?.only_in_system) ? sd.only_in_system : [];
+  const onlyMan = Array.isArray(sd?.only_in_manual) ? sd.only_in_manual : [];
+  return { onlySys, onlyMan };
+}
+
+/**
+ * 门店对称差表 + 分页条（仅 innerHTML 片段，无外层 h4）
+ * @param {object} sd store_diff
+ * @param {number} page
+ * @param {number} pageSize
+ */
+function renderDiffAnalysisStoreListSectionHTML(sd, page, pageSize) {
+  const { onlySys, onlyMan } = _normalizedStoreDiffArrays(sd);
+  const ps = DIFF_STORE_LIST_PAGE_SIZES.includes(Number(pageSize))
+    ? Number(pageSize)
+    : DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+  if (onlySys.length === 0 && onlyMan.length === 0) {
+    return `<div class="table-scroll table-scroll--diff-stores">
+    <table class="data-table data-table--diff-stores" aria-label="仅系统有与仅手工有的门店名">
+    <thead><tr><th>仅系统侧有</th><th>仅手工侧有</th></tr></thead>
+    <tbody><tr><td colspan="2" class="empty-hint">两侧配送门店集合（去重）一致，无仅单侧门店。</td></tr></tbody>
+    </table></div>`;
+  }
+  const nRows = Math.max(onlySys.length, onlyMan.length);
+  const totalPages = Math.max(1, Math.ceil(nRows / ps) || 1);
+  const p = Math.max(1, Math.min(Number(page) || 1, totalPages));
+  const start = (p - 1) * ps;
+  const end = Math.min(start + ps, nRows);
+  const listRows = [];
+  for (let i = start; i < end; i += 1) {
+    const left =
+      onlySys[i] != null && String(onlySys[i]).trim() !== ""
+        ? escapeHtml(String(onlySys[i]))
+        : "—";
+    const right =
+      onlyMan[i] != null && String(onlyMan[i]).trim() !== ""
+        ? escapeHtml(String(onlyMan[i]))
+        : "—";
+    listRows.push(`<tr><td>${left}</td><td>${right}</td></tr>`);
+  }
+  const sizeOpts = DIFF_STORE_LIST_PAGE_SIZES.map(
+    (n) => `<option value="${n}" ${ps === n ? "selected" : ""}>${n} 行</option>`,
+  ).join("");
+  const pager = `<div class="diff-store-list-pager toolbar" role="navigation" aria-label="门店差异列表分页">
+    <p class="diff-store-list-pager__summary">第 <strong>${p}</strong> / ${totalPages} 页 · 共 <strong>${nRows}</strong> 行 <span class="empty-hint">（左右两列按行号对齐，行数以较长一侧为准）</span></p>
+    <div class="field">
+      <span class="field-label">每页</span>
+      <select id="diffAnalysisStoreListPageSize" aria-label="每页行数">${sizeOpts}</select>
+    </div>
+    <button type="button" class="btn btn--secondary" id="diffAnalysisStoreListPrev" ${p <= 1 ? "disabled" : ""} aria-label="上一页">上一页</button>
+    <button type="button" class="btn btn--primary" id="diffAnalysisStoreListNext" ${
+      p >= totalPages ? "disabled" : ""
+    } aria-label="下一页">下一页</button>
+  </div>`;
+  return `<div class="diff-store-list-paged" data-page="${p}" data-total-pages="${totalPages}">
+  <div class="table-scroll table-scroll--diff-stores">
+    <table class="data-table data-table--diff-stores" aria-label="仅系统有与仅手工有的门店名">
+    <thead><tr><th>仅系统侧有</th><th>仅手工侧有</th></tr></thead>
+    <tbody>${listRows.join("")}</tbody>
+    </table>
+  </div>
+  ${pager}
+  </div>`;
+}
+
+function bindDiffAnalysisStoreListPager() {
+  const section = document.getElementById("diffAnalysisStoreListSection");
+  if (!section || !_diffAnalysisStoreListSnapshot) return;
+  const wrap = section.querySelector(".diff-store-list-paged");
+  const pCur = Number(wrap?.getAttribute("data-page")) || 1;
+  const tps = Number(wrap?.getAttribute("data-total-pages")) || 1;
+  const go = (targetPage, explicitPageSize) => {
+    let ps0 = Number(explicitPageSize);
+    if (!DIFF_STORE_LIST_PAGE_SIZES.includes(ps0)) {
+      const el = document.getElementById("diffAnalysisStoreListPageSize");
+      ps0 = Number(el?.value) || DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+      if (!DIFF_STORE_LIST_PAGE_SIZES.includes(ps0)) {
+        ps0 = DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+      }
+    }
+    const { onlySys, onlyMan } = _normalizedStoreDiffArrays(_diffAnalysisStoreListSnapshot);
+    const nRows = Math.max(onlySys.length, onlyMan.length);
+    const totalPages = nRows > 0 ? Math.max(1, Math.ceil(nRows / ps0) || 1) : 1;
+    const p = Math.max(1, Math.min(Number(targetPage) || 1, totalPages));
+    section.innerHTML = renderDiffAnalysisStoreListSectionHTML(
+      _diffAnalysisStoreListSnapshot,
+      p,
+      ps0,
+    );
+    bindDiffAnalysisStoreListPager();
+  };
+  document.getElementById("diffAnalysisStoreListPrev")?.addEventListener("click", () => {
+    if (pCur <= 1) return;
+    go(pCur - 1);
+  });
+  document.getElementById("diffAnalysisStoreListNext")?.addEventListener("click", () => {
+    if (pCur >= tps) return;
+    go(pCur + 1);
+  });
+  document.getElementById("diffAnalysisStoreListPageSize")?.addEventListener("change", (e) => {
+    go(1, Number(e.target.value));
+  });
+}
+
+/** 运单配载门店数（每条运单一行） */
+let _diffAnalysisWbLoadItems = null;
+let _diffAnalysisWbLoadShowSource = false;
+let _diffAnalysisWbLoadPgSystem = 1;
+let _diffAnalysisWbLoadPgManual = 1;
+let _diffAnalysisWbLoadPgSingle = 1;
+
+function renderDiffAnalysisWbLoadSummaryP(sum, datasetType) {
+  const w = sum || {};
+  const n = Number(w.waybill_count) || 0;
+  const avg = w.avg_store_count != null && w.avg_store_count !== "" ? Number(w.avg_store_count) : 0;
+  const avgStr = Number.isFinite(avg) ? String(avg) : "0";
+  if (datasetType === "all") {
+    const sc = Number(w.system_waybill_count) || 0;
+    const sa =
+      w.system_avg_store_count != null && w.system_avg_store_count !== ""
+        ? Number(w.system_avg_store_count)
+        : 0;
+    const mc = Number(w.manual_waybill_count) || 0;
+    const ma =
+      w.manual_avg_store_count != null && w.manual_avg_store_count !== ""
+        ? Number(w.manual_avg_store_count)
+        : 0;
+    return `<p class="diff-wbload-summary">在筛选范围内共 <strong>${n}</strong> 条运单；<strong>平均每条运单配载</strong> <strong>${avgStr}</strong> 家门店（拼载列去重）。系统 <strong>${sc}</strong> 单、单均 <strong>${Number.isFinite(sa) ? sa : 0}</strong> 家；手工 <strong>${mc}</strong> 单、单均 <strong>${Number.isFinite(ma) ? ma : 0}</strong> 家。</p>`;
+  }
+  if (datasetType === "system") {
+    return `<p class="diff-wbload-summary">在筛选范围内共 <strong>${n}</strong> 条系统运单；<strong>平均每条运单配载</strong> <strong>${avgStr}</strong> 家门店（拼载列去重）。</p>`;
+  }
+  return `<p class="diff-wbload-summary">在筛选范围内共 <strong>${n}</strong> 条手工运单；<strong>平均每条运单配载</strong> <strong>${avgStr}</strong> 家门店（拼载列去重）。</p>`;
+}
+
+function _wbLoadRowTr(it) {
+  const rd = String(it.route_date || "").slice(0, 10);
+  const vt = escapeHtml(String(it.vehicle_type || "—"));
+  const sc = String(Number(it.store_count) || 0);
+  return `<tr>
+    <td>${escapeHtml(rd)}</td>
+    <td>${vt}</td>
+    <td class="td-num">${sc}</td>
+  </tr>`;
+}
+
+/**
+ * 单个分组下的表格 + 分页（无「来源」列，由分组标题表示侧别）
+ * @param {"system" | "manual"} side
+ */
+function renderWbLoadGroupedChunk(
+  subList,
+  page,
+  pageSize,
+  side,
+  title,
+  idSuffix,
+) {
+  const ps = pageSize;
+  const nRows = subList.length;
+  if (nRows === 0) {
+    return `<section class="diff-wbload-group" aria-label="${title}">
+    <h4 class="diff-wbload-group__title">${title}</h4>
+    <p class="empty-hint diff-wbload-group__empty">该侧在筛选内无运单。</p>
+  </section>`;
+  }
+  const totalPages = Math.max(1, Math.ceil(nRows / ps) || 1);
+  const p = Math.max(1, Math.min(Number(page) || 1, totalPages));
+  if (side === "system") {
+    _diffAnalysisWbLoadPgSystem = p;
+  } else {
+    _diffAnalysisWbLoadPgManual = p;
+  }
+  const start = (p - 1) * ps;
+  const end = Math.min(start + ps, nRows);
+  const slice = subList.slice(start, end);
+  const body = slice.map((it) => _wbLoadRowTr(it)).join("");
+  return `<section class="diff-wbload-group" data-wbload-side="${side}" aria-label="${title}">
+  <h4 class="diff-wbload-group__title">${title} <span class="diff-wbload-group__count">（${nRows} 条运单）</span></h4>
+  <div class="diff-wbload-paged" data-wbload-side="${side}" data-page="${p}" data-total-pages="${totalPages}">
+  <div class="table-scroll table-scroll--diff-wbload">
+  <table class="data-table data-table--diff-wbload" aria-label="${title} — 运单配载">
+    <thead><tr><th>排线日</th><th>车型</th><th>配载门店数</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  </div>
+  <div class="diff-wbload-pager toolbar" role="navigation" aria-label="${title} 分页">
+    <p class="diff-wbload-pager__summary">第 <strong>${p}</strong> / ${totalPages} 页 · 本组 <strong>${nRows}</strong> 条</p>
+    <button type="button" class="btn btn--secondary" id="diffAnalysisWbLoadPrev${idSuffix}" ${p <= 1 ? "disabled" : ""} aria-label="上一页">上一页</button>
+    <button type="button" class="btn btn--primary" id="diffAnalysisWbLoadNext${idSuffix}" ${
+    p >= totalPages ? "disabled" : ""
+  } aria-label="下一页">下一页</button>
+  </div>
+  </div>
+</section>`;
+}
+
+function renderDiffAnalysisWbLoadSectionHTML(items, showSourceCol, pageSize) {
+  const list = Array.isArray(items) ? items : [];
+  const ps = DIFF_STORE_LIST_PAGE_SIZES.includes(Number(pageSize))
+    ? Number(pageSize)
+    : DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+  if (list.length === 0) {
+    return `<p class="empty-hint" style="margin:0">筛选范围内无运单数据。</p>`;
+  }
+  const sizeOpts = DIFF_STORE_LIST_PAGE_SIZES.map(
+    (n) => `<option value="${n}" ${ps === n ? "selected" : ""}>${n} 行</option>`,
+  ).join("");
+
+  if (showSourceCol) {
+    const sys = list.filter((x) => x.dataset_type === "system");
+    const man = list.filter((x) => x.dataset_type === "manual");
+    return `<div class="diff-wbload--grouped">
+  <div class="diff-wbload-shared-pager toolbar" role="group" aria-label="分组列表每页条数">
+    <div class="field">
+      <span class="field-label">每页</span>
+      <select id="diffAnalysisWbLoadPageSize" aria-label="每页行数（各组）">${sizeOpts}</select>
+    </div>
+    <p class="diff-wbload-shared-pager__hint empty-hint">系统建议 / 手工排线 分开列表；页码各自独立，每页行数对两组同时生效。</p>
+  </div>
+  ${renderWbLoadGroupedChunk(sys, _diffAnalysisWbLoadPgSystem, ps, "system", "系统建议", "Sys")}
+  ${renderWbLoadGroupedChunk(man, _diffAnalysisWbLoadPgManual, ps, "manual", "手工排线", "Man")}
+  </div>`;
+  }
+
+  const nRows = list.length;
+  const totalPages = Math.max(1, Math.ceil(nRows / ps) || 1);
+  const p = Math.max(1, Math.min(_diffAnalysisWbLoadPgSingle, totalPages));
+  if (p !== _diffAnalysisWbLoadPgSingle) {
+    _diffAnalysisWbLoadPgSingle = p;
+  }
+  const start = (p - 1) * ps;
+  const end = Math.min(start + ps, nRows);
+  const slice = list.slice(start, end);
+  const body = slice.map((it) => _wbLoadRowTr(it)).join("");
+  const pager = `<div class="diff-wbload-pager toolbar" role="navigation" aria-label="运单配载列表分页">
+    <p class="diff-wbload-pager__summary">第 <strong>${p}</strong> / ${totalPages} 页 · 本表 <strong>${nRows}</strong> 条运单</p>
+    <div class="field">
+      <span class="field-label">每页</span>
+      <select id="diffAnalysisWbLoadPageSize" aria-label="每页行数">${sizeOpts}</select>
+    </div>
+    <button type="button" class="btn btn--secondary" id="diffAnalysisWbLoadPrev" ${p <= 1 ? "disabled" : ""} aria-label="上一页">上一页</button>
+    <button type="button" class="btn btn--primary" id="diffAnalysisWbLoadNext" ${
+      p >= totalPages ? "disabled" : ""
+    } aria-label="下一页">下一页</button>
+  </div>`;
+  return `<div class="diff-wbload-paged" data-page="${p}" data-total-pages="${totalPages}">
+  <div class="table-scroll table-scroll--diff-wbload">
+  <table class="data-table data-table--diff-wbload" aria-label="运单配载门店数">
+    <thead><tr><th>排线日</th><th>车型</th><th>配载门店数</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  </div>
+  ${pager}
+  </div>`;
+}
+
+function renderDiffAnalysisWaybillLoadInner(wsl, datasetType) {
+  if (!wsl || typeof wsl !== "object") {
+    return '<p class="empty-hint">无法加载运单配载分析。</p>';
+  }
+  const items = Array.isArray(wsl.items) ? wsl.items : [];
+  return `${renderDiffAnalysisWbLoadSummaryP(wsl.summary, datasetType)}
+  <div id="diffAnalysisWbLoadSection">${renderDiffAnalysisWbLoadSectionHTML(
+    items,
+    datasetType === "all",
+    DIFF_STORE_LIST_DEFAULT_PAGE_SIZE,
+  )}</div>
+  <p class="empty-hint" style="margin:12px 0 0;max-width:48rem">每行对应一条 <code>is_active=1</code> 运单；<strong>配载门店数</strong> = 「拼载门店」列经去重后的店名个数。选「全部」时按<strong>系统建议 / 手工排线</strong>分两组展示；选单侧时仅一张表。</p>`;
+}
+
+function bindDiffAnalysisWbLoadPager() {
+  const section = document.getElementById("diffAnalysisWbLoadSection");
+  if (!section || !Array.isArray(_diffAnalysisWbLoadItems)) return;
+
+  const readPs = (explicit) => {
+    let ps0 = Number(explicit);
+    if (!DIFF_STORE_LIST_PAGE_SIZES.includes(ps0)) {
+      const el = document.getElementById("diffAnalysisWbLoadPageSize");
+      ps0 = Number(el?.value) || DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+      if (!DIFF_STORE_LIST_PAGE_SIZES.includes(ps0)) {
+        ps0 = DIFF_STORE_LIST_DEFAULT_PAGE_SIZE;
+      }
+    }
+    return ps0;
+  };
+
+  const rerender = (ps0) => {
+    section.innerHTML = renderDiffAnalysisWbLoadSectionHTML(
+      _diffAnalysisWbLoadItems,
+      _diffAnalysisWbLoadShowSource,
+      ps0,
+    );
+    bindDiffAnalysisWbLoadPager();
+  };
+
+  if (section.querySelector(".diff-wbload--grouped")) {
+    const sysWrap = section.querySelector(
+      '.diff-wbload-paged[data-wbload-side="system"]',
+    );
+    const manWrap = section.querySelector(
+      '.diff-wbload-paged[data-wbload-side="manual"]',
+    );
+    const pSys = Number(sysWrap?.getAttribute("data-page")) || 1;
+    const tSys = Number(sysWrap?.getAttribute("data-total-pages")) || 1;
+    const pMan = Number(manWrap?.getAttribute("data-page")) || 1;
+    const tMan = Number(manWrap?.getAttribute("data-total-pages")) || 1;
+
+    document.getElementById("diffAnalysisWbLoadPrevSys")?.addEventListener("click", () => {
+      if (pSys <= 1) return;
+      _diffAnalysisWbLoadPgSystem = pSys - 1;
+      rerender(readPs(undefined));
+    });
+    document.getElementById("diffAnalysisWbLoadNextSys")?.addEventListener("click", () => {
+      if (pSys >= tSys) return;
+      _diffAnalysisWbLoadPgSystem = pSys + 1;
+      rerender(readPs(undefined));
+    });
+    document.getElementById("diffAnalysisWbLoadPrevMan")?.addEventListener("click", () => {
+      if (pMan <= 1) return;
+      _diffAnalysisWbLoadPgManual = pMan - 1;
+      rerender(readPs(undefined));
+    });
+    document.getElementById("diffAnalysisWbLoadNextMan")?.addEventListener("click", () => {
+      if (pMan >= tMan) return;
+      _diffAnalysisWbLoadPgManual = pMan + 1;
+      rerender(readPs(undefined));
+    });
+    document.getElementById("diffAnalysisWbLoadPageSize")?.addEventListener("change", (e) => {
+      const ps0 = readPs(Number(e.target.value));
+      _diffAnalysisWbLoadPgSystem = 1;
+      _diffAnalysisWbLoadPgManual = 1;
+      rerender(ps0);
+    });
+    return;
+  }
+
+  const wrap = section.querySelector(".diff-wbload-paged");
+  if (!wrap) return;
+  const pCur = Number(wrap.getAttribute("data-page")) || 1;
+  const tps = Number(wrap.getAttribute("data-total-pages")) || 1;
+  const go = (targetPage, explicitPageSize) => {
+    const ps0 = readPs(explicitPageSize);
+    const nRows = _diffAnalysisWbLoadItems.length;
+    const totalPages = nRows > 0 ? Math.max(1, Math.ceil(nRows / ps0) || 1) : 1;
+    const p = Math.max(1, Math.min(Number(targetPage) || 1, totalPages));
+    _diffAnalysisWbLoadPgSingle = p;
+    section.innerHTML = renderDiffAnalysisWbLoadSectionHTML(
+      _diffAnalysisWbLoadItems,
+      _diffAnalysisWbLoadShowSource,
+      ps0,
+    );
+    bindDiffAnalysisWbLoadPager();
+  };
+  document.getElementById("diffAnalysisWbLoadPrev")?.addEventListener("click", () => {
+    if (pCur <= 1) return;
+    go(pCur - 1);
+  });
+  document.getElementById("diffAnalysisWbLoadNext")?.addEventListener("click", () => {
+    if (pCur >= tps) return;
+    go(pCur + 1);
+  });
+  document.getElementById("diffAnalysisWbLoadPageSize")?.addEventListener("change", (e) => {
+    _diffAnalysisWbLoadPgSingle = 1;
+    go(1, Number(e.target.value));
+  });
+}
+
+function refetchDiffAndCompareAfterImport() {
+  try {
+    if (typeof _refetchDiffAnalysis === "function") _refetchDiffAnalysis();
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof _refetchCompareDisplayOnly === "function") _refetchCompareDisplayOnly();
+  } catch {
+    /* ignore */
+  }
+}
+
 function defaultDateRange() {
   const to = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -992,6 +1383,8 @@ function overviewSection(o) {
 }
 
 function route() {
+  _refetchCompareDisplayOnly = null;
+  _refetchDiffAnalysis = null;
   const hash = window.location.hash || "#import";
   if (hash.startsWith("#route-map")) {
     renderRouteMap();
@@ -1114,15 +1507,15 @@ function renderDiffAnalysisVehicleDiffInner(vd) {
       : st - mt;
   const summary = `<div class="diff-analysis-vehicle-summary" role="group" aria-label="车辆差异合计">
     <div class="diff-analysis-vehicle-summary__row">
-      <span class="diff-analysis-vehicle-summary__cell">系统车次数合计 <strong>${st}</strong></span>
+      <span class="diff-analysis-vehicle-summary__cell">系统运单总数 <strong>${st}</strong></span>
       <span class="diff-analysis-vehicle-summary__sep" aria-hidden="true">·</span>
-      <span class="diff-analysis-vehicle-summary__cell">手工车次数合计 <strong>${mt}</strong></span>
+      <span class="diff-analysis-vehicle-summary__cell">手工运单总数 <strong>${mt}</strong></span>
       <span class="diff-analysis-vehicle-summary__sep" aria-hidden="true">·</span>
-      <span class="diff-analysis-vehicle-summary__cell diff-analysis-vehicle-summary__cell--diff">总车辆差异（系统−手工） <strong>${totDiff}</strong></span>
+      <span class="diff-analysis-vehicle-summary__cell diff-analysis-vehicle-summary__cell--diff">运单差异（系统−手工） <strong>${totDiff}</strong></span>
     </div>
   </div>`;
   if (rows.length === 0) {
-    return `${summary}<p class="empty-hint" style="margin:12px 0 0">当前排线起止与仓库下无按车型汇总行（两侧可能均为 0）。</p>`;
+    return `${summary}<p class="empty-hint" style="margin:12px 0 0">当前排线起止与仓库下无按车型汇总的运单（两侧可能均为 0）。</p>`;
   }
   const body = rows
     .map(
@@ -1135,18 +1528,50 @@ function renderDiffAnalysisVehicleDiffInner(vd) {
     )
     .join("");
   return `${summary}
-  <p class="diff-analysis-vehicle-totals empty-hint" style="margin:10px 0 10px">下表按<strong>车型</strong>列出系统/手工车次数及差异；与排线概览「总车次差」口径一致（每行 1 车；同上方日期与仓库，与「数据范围」列无关）。</p>
-  <div class="table-scroll"><table class="data-table data-table--diff-vehicle" aria-label="车辆差异按车型">
-    <thead><tr><th>车型</th><th>系统车次数</th><th>手工车次数</th><th>差异（系统−手工）</th></tr></thead>
+  <p class="diff-analysis-vehicle-totals empty-hint" style="margin:10px 0 10px">下表为各<strong>车型</strong>下系统/手工<strong>运单数</strong>；合计为两侧<strong>运单总数</strong>。车辆数与运单一一对应。同上方日期与仓库，与「数据范围」列无关。</p>
+  <div class="table-scroll"><table class="data-table data-table--diff-vehicle" aria-label="车辆差异按车型运单数">
+    <thead><tr><th>车型</th><th>系统运单数</th><th>手工运单数</th><th>差异（系统−手工）</th></tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
+}
+
+function renderDiffAnalysisStoreDiffInner(sd) {
+  if (!sd || typeof sd !== "object") {
+    return '<p class="empty-hint">无法加载门店差异。</p>';
+  }
+  const s = Number(sd.system_store_count) || 0;
+  const m = Number(sd.manual_store_count) || 0;
+  const dRaw = sd.diff;
+  const d =
+    dRaw != null && dRaw !== "" && Number.isFinite(Number(dRaw)) ? Number(dRaw) : s - m;
+  return `<div class="diff-analysis-store-grid" role="group" aria-label="门店差异">
+    <div class="diff-analysis-store-metric">
+      <span class="diff-analysis-store-metric__label">系统侧门店数（去重）</span>
+      <span class="diff-analysis-store-metric__value">${s}</span>
+    </div>
+    <div class="diff-analysis-store-metric">
+      <span class="diff-analysis-store-metric__label">手工侧门店数（去重）</span>
+      <span class="diff-analysis-store-metric__value">${m}</span>
+    </div>
+    <div class="diff-analysis-store-metric diff-analysis-store-metric--diff">
+      <span class="diff-analysis-store-metric__label">门店数差异（系统−手工）</span>
+      <span class="diff-analysis-store-metric__value">${d}</span>
+    </div>
+  </div>
+  <h4 class="diff-analysis-store-list__title">门店差异列表（去重后仅一侧有）</h4>
+  <div id="diffAnalysisStoreListSection">${renderDiffAnalysisStoreListSectionHTML(
+    sd,
+    1,
+    DIFF_STORE_LIST_DEFAULT_PAGE_SIZE,
+  )}</div>
+  <p class="empty-hint" style="margin:12px 0 0;max-width:40rem">将各运单「拼载门店」列展开后按店名去重，对比两侧门店集合的<strong>对称差</strong>；与「车辆差异」中运单数相互对照。</p>`;
 }
 
 function renderDiffAnalysis() {
   const dr = defaultDateRange();
   app.innerHTML = `
     <div class="page-head page-head--compact">
-      <p><small class="empty-hint">选择<strong>排线起止</strong>（闭区间，默认近 30 天）、<strong>始发仓库</strong>与<strong>数据范围</strong>。<strong>车辆差异</strong>按同区间、同仓库在系统/手工表间对<strong>各车型车次数</strong>对比；<strong>一店多车</strong>为下方表与按日柱图。趋势图：按日「一店多车」<strong>门店数</strong>。选「全部」时一店多车表不合并两来源；<strong>项次</strong>为同侧从 1 起；「全部」时表含「来源」列。</small></p>
+      <p><small class="empty-hint">选择<strong>排线起止</strong>（闭区间，默认近 30 天）、<strong>始发仓库</strong>与<strong>数据范围</strong>。<strong>车辆差异</strong>按<strong>运单/车型</strong>；<strong>门店差异</strong>按拼载店<strong>去重</strong>。下方为<strong>一店多车</strong>与按日柱图。选「全部」时一店多车表不合并两来源；<strong>项次</strong>为同侧从 1 起；「全部」时表含「来源」列。</small></p>
     </div>
     <div class="toolbar">
       <div class="field">
@@ -1174,9 +1599,19 @@ function renderDiffAnalysis() {
       <button type="button" class="btn btn--primary" id="diffAnalysisQuery">查询</button>
     </div>
     <div id="diffAnalysisVehicleBlock" class="diff-analysis-vehicle-block" hidden>
-      <h3 class="diff-analysis-chart-block__title">车辆差异</h3>
-      <p class="empty-hint diff-analysis-chart-block__sub">在<strong>排线起止、仓库</strong>内，对系统建议表与手工排线表中 <code>is_active=1</code> 的运单行，按「车型」汇总<strong>车次数</strong>并左右对比。与下方「一店多车」表共用日期与仓库；<strong>不受</strong>「数据范围」列（全部/仅系统/仅手工）影响。</p>
+      <h3 class="diff-analysis-chart-block__title">车辆差异（运单 / 车型）</h3>
+      <p class="empty-hint diff-analysis-chart-block__sub">在<strong>排线起止、仓库</strong>内，对 <code>is_active=1</code> 行按「车型」统计<strong>运单数</strong>，合计为<strong>运单总数</strong>。与「门店差异」独立。与「一店多车」共用日期与仓库；<strong>不受</strong>「数据范围」列影响。</p>
       <div id="diffAnalysisVehicleDiffInner"></div>
+    </div>
+    <div id="diffAnalysisStoreBlock" class="diff-analysis-store-block" hidden>
+      <h3 class="diff-analysis-chart-block__title">门店差异（配送面 · 去重）</h3>
+      <p class="empty-hint diff-analysis-chart-block__sub">拼载门店展开后店名去重，对比系统/手工在<strong>配送门店数量</strong>上的差异，便于对照上方<strong>运单/车辆</strong>变化。同一筛选与「车辆差异」一致。</p>
+      <div id="diffAnalysisStoreDiffInner"></div>
+    </div>
+    <div id="diffAnalysisWaybillLoadBlock" class="diff-analysis-wbload-block" hidden>
+      <h3 class="diff-analysis-chart-block__title">运单配载门店（一车配几家）</h3>
+      <p class="empty-hint diff-analysis-chart-block__sub">每条运单一行，统计该单「拼载门店」列经 <strong>去重</strong> 后的店数；下为逐单明细，文首为在<strong>排线起止、仓库、数据范围</strong>下的<strong>平均配载</strong>。选「全部」时按<strong>系统 / 手工</strong>分两组列表。与一店多车表<strong>无依赖</strong>。</p>
+      <div id="diffAnalysisWaybillLoadInner"></div>
     </div>
     <div id="diffAnalysisChartBlock" class="diff-analysis-chart-block" hidden>
       <h3 class="diff-analysis-chart-block__title">一店多车 · 按日趋势（门店数）</h3>
@@ -1231,10 +1666,16 @@ function renderDiffAnalysis() {
             <th>运单号</th>`;
     }
     const vehicleBlock = document.getElementById("diffAnalysisVehicleBlock");
+    const storeBlock = document.getElementById("diffAnalysisStoreBlock");
+    const waybillBlock = document.getElementById("diffAnalysisWaybillLoadBlock");
     if (!routeDateFrom || !routeDateTo) {
       tbody.innerHTML = "";
       if (chartBlock) chartBlock.setAttribute("hidden", "");
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
+      if (storeBlock) storeBlock.setAttribute("hidden", "");
+      if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      _diffAnalysisWbLoadItems = null;
+      _diffAnalysisStoreListSnapshot = null;
       emptyEl.removeAttribute("hidden");
       emptyEl.textContent = "请填写排线起止日期。";
       return;
@@ -1243,6 +1684,10 @@ function renderDiffAnalysis() {
       tbody.innerHTML = "";
       if (chartBlock) chartBlock.setAttribute("hidden", "");
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
+      if (storeBlock) storeBlock.setAttribute("hidden", "");
+      if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      _diffAnalysisWbLoadItems = null;
+      _diffAnalysisStoreListSnapshot = null;
       emptyEl.removeAttribute("hidden");
       emptyEl.textContent = "排线起不能晚于排线止。";
       return;
@@ -1251,6 +1696,10 @@ function renderDiffAnalysis() {
     tbody.innerHTML = `<tr><td colspan="${colSpan}" class="empty-hint">加载中…</td></tr>`;
     if (chartBlock) chartBlock.setAttribute("hidden", "");
     if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
+    if (storeBlock) storeBlock.setAttribute("hidden", "");
+    if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+    _diffAnalysisWbLoadItems = null;
+    _diffAnalysisStoreListSnapshot = null;
     const q = new URLSearchParams({
       route_date_from: routeDateFrom,
       route_date_to: routeDateTo,
@@ -1268,6 +1717,10 @@ function renderDiffAnalysis() {
       if (!resp.ok) {
         if (chartBlock) chartBlock.setAttribute("hidden", "");
         if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
+        if (storeBlock) storeBlock.setAttribute("hidden", "");
+        if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+        _diffAnalysisWbLoadItems = null;
+        _diffAnalysisStoreListSnapshot = null;
         const detail =
           typeof data.detail === "string"
             ? data.detail
@@ -1283,6 +1736,28 @@ function renderDiffAnalysis() {
       if (vehicleBlock && vInner) {
         vInner.innerHTML = renderDiffAnalysisVehicleDiffInner(data.vehicle_diff);
         vehicleBlock.removeAttribute("hidden");
+      }
+      const sInner = document.getElementById("diffAnalysisStoreDiffInner");
+      if (storeBlock && sInner) {
+        _diffAnalysisStoreListSnapshot = data.store_diff && typeof data.store_diff === "object" ? data.store_diff : null;
+        sInner.innerHTML = renderDiffAnalysisStoreDiffInner(data.store_diff);
+        storeBlock.removeAttribute("hidden");
+        bindDiffAnalysisStoreListPager();
+      }
+      const wbInner = document.getElementById("diffAnalysisWaybillLoadInner");
+      if (waybillBlock && wbInner) {
+        const wsl =
+          data.waybill_store_load && typeof data.waybill_store_load === "object"
+            ? data.waybill_store_load
+            : { summary: {}, items: [] };
+        _diffAnalysisWbLoadItems = Array.isArray(wsl.items) ? wsl.items : [];
+        _diffAnalysisWbLoadShowSource = datasetType === "all";
+        _diffAnalysisWbLoadPgSystem = 1;
+        _diffAnalysisWbLoadPgManual = 1;
+        _diffAnalysisWbLoadPgSingle = 1;
+        wbInner.innerHTML = renderDiffAnalysisWaybillLoadInner(wsl, datasetType);
+        waybillBlock.removeAttribute("hidden");
+        bindDiffAnalysisWbLoadPager();
       }
       const whSel = document.getElementById("diffAnalysisWarehouse");
       const wOpts = Array.isArray(data.warehouse_options) ? data.warehouse_options : [];
@@ -1363,10 +1838,15 @@ function renderDiffAnalysis() {
     } catch (e) {
       if (chartBlock) chartBlock.setAttribute("hidden", "");
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
+      if (storeBlock) storeBlock.setAttribute("hidden", "");
+      if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      _diffAnalysisWbLoadItems = null;
+      _diffAnalysisStoreListSnapshot = null;
       tbody.innerHTML = `<tr><td colspan="${colSpan}">${backendUnreachableHtml(e)}</td></tr>`;
     }
   };
   document.getElementById("diffAnalysisQuery").addEventListener("click", runQuery);
+  _refetchDiffAnalysis = runQuery;
   void runQuery();
 }
 
@@ -1375,7 +1855,7 @@ let importModalKeyController = null;
 function renderImport() {
   app.innerHTML = `
     <div class="page-head page-head--compact">
-      <p><small class="empty-hint">导入按<strong>排线日期 + 运单号</strong>更新或新增；模板含<strong>车辆类型</strong>等必填列。下方「数据明细」按日期查询，与是否导入无关。</small></p>
+      <p><small class="empty-hint">导入按<strong>排线日期 + 运单号</strong>更新或新增；模板含<strong>车辆类型</strong>等必填列。成功导入后会在后台对<strong>所涉排线日</strong>重算人工补算与<strong>排线对比结果</strong>。停留在「排线差异」「差异分析」页时会自动拉取最新数据。下方「数据明细」按日期查询，与是否导入无关。</small></p>
     </div>
     <div class="toolbar toolbar--import">
       <div class="field">
@@ -1532,6 +2012,7 @@ function renderImport() {
       }
       setImportListViewType(datasetType);
       await initImportDataListPanel(importRespWrap, { focusDataset: datasetType });
+      refetchDiffAndCompareAfterImport();
     } catch (err) {
       closeImportModal();
       importMessageArea.innerHTML = backendUnreachableHtml(err);
@@ -1602,10 +2083,66 @@ function renderResult() {
     </div>
     <p id="resultEmpty" class="empty-hint" style="display:none">暂无数据，请先选择排线起止日期并点击查询。</p>
   `;
-  document.getElementById("queryBtn").onclick = async () => {
+  const loadCompareDataOnly = async (opts) => {
+    const fromImport = opts && opts.fromImport;
     const routeFrom = (document.getElementById("lineDiffDateFrom")?.value || "").trim();
     const routeTo = (document.getElementById("lineDiffDateTo")?.value || "").trim();
     const status = document.getElementById("matchStatus").value;
+    const whSel = document.getElementById("compareWarehouse");
+    const selectedWh = (whSel && whSel.value) || "";
+    const overviewArea = document.getElementById("overviewArea");
+    const tbody = document.getElementById("resultTable");
+    const emptyEl = document.getElementById("resultEmpty");
+    const statusWrap = document.getElementById("compareRespWrap");
+    if (!routeFrom || !routeTo || routeFrom > routeTo) return;
+    if (fromImport && statusWrap) {
+      statusWrap.innerHTML = `<div class="alert alert--muted">已随导入在后台重算所涉日期的比对，正在刷新本页数据…</div>`;
+    }
+    overviewArea.innerHTML = `<div class="alert alert--muted">加载概览与明细…</div>`;
+    tbody.innerHTML = "";
+    try {
+      const whQ = selectedWh.trim()
+        ? `&warehouse_name=${encodeURIComponent(selectedWh.trim())}`
+        : "";
+      const overviewResp = await fetch(
+        `${API_BASE}/compare/overview?route_date_from=${encodeURIComponent(
+          routeFrom,
+        )}&route_date_to=${encodeURIComponent(routeTo)}${whQ}`,
+      );
+      const overviewData = await overviewResp.json();
+      fillCompareWarehouseSelect(whSel, overviewData, selectedWh);
+      overviewArea.innerHTML = overviewSection(overviewData);
+      const whForRows = (document.getElementById("compareWarehouse")?.value || "").trim();
+      const whRowsQ = whForRows ? `&warehouse_name=${encodeURIComponent(whForRows)}` : "";
+      const resultResp = await fetch(
+        `${API_BASE}/compare/results?route_date_from=${encodeURIComponent(
+          routeFrom,
+        )}&route_date_to=${encodeURIComponent(
+          routeTo,
+        )}&match_status=${encodeURIComponent(status)}${whRowsQ}`,
+      );
+      const rows = await resultResp.json();
+      _compareResultRows = Array.isArray(rows) ? rows : [];
+      _compareResultSort.key = null;
+      _compareResultSort.dir = "asc";
+      if (fromImport && statusWrap) {
+        statusWrap.innerHTML = "";
+      }
+      refreshCompareResultTable();
+      emptyEl.style.display = _compareResultRows.length ? "none" : "block";
+      if (!_compareResultRows.length) emptyEl.textContent = "该条件下没有排线差异记录。";
+    } catch (err) {
+      if (statusWrap) statusWrap.innerHTML = backendUnreachableHtml(err);
+      if (overviewArea) overviewArea.innerHTML = "";
+      _compareResultRows = [];
+      _compareResultSort.key = null;
+      if (tbody) tbody.innerHTML = "";
+    }
+  };
+  _refetchCompareDisplayOnly = () => loadCompareDataOnly({ fromImport: true });
+  document.getElementById("queryBtn").onclick = async () => {
+    const routeFrom = (document.getElementById("lineDiffDateFrom")?.value || "").trim();
+    const routeTo = (document.getElementById("lineDiffDateTo")?.value || "").trim();
     const whSel = document.getElementById("compareWarehouse");
     const selectedWh = (whSel && whSel.value) || "";
     const overviewArea = document.getElementById("overviewArea");
@@ -1663,34 +2200,7 @@ function renderResult() {
       } else {
         statusWrap.innerHTML = "";
       }
-      overviewArea.innerHTML = `<div class="alert alert--muted">加载概览与明细…</div>`;
-      const whQ = selectedWh.trim()
-        ? `&warehouse_name=${encodeURIComponent(selectedWh.trim())}`
-        : "";
-      const overviewResp = await fetch(
-        `${API_BASE}/compare/overview?route_date_from=${encodeURIComponent(
-          routeFrom,
-        )}&route_date_to=${encodeURIComponent(routeTo)}${whQ}`,
-      );
-      const overviewData = await overviewResp.json();
-      fillCompareWarehouseSelect(whSel, overviewData, selectedWh);
-      overviewArea.innerHTML = overviewSection(overviewData);
-      const whForRows = (document.getElementById("compareWarehouse")?.value || "").trim();
-      const whRowsQ = whForRows ? `&warehouse_name=${encodeURIComponent(whForRows)}` : "";
-      const resultResp = await fetch(
-        `${API_BASE}/compare/results?route_date_from=${encodeURIComponent(
-          routeFrom,
-        )}&route_date_to=${encodeURIComponent(
-          routeTo,
-        )}&match_status=${encodeURIComponent(status)}${whRowsQ}`,
-      );
-      const rows = await resultResp.json();
-      _compareResultRows = Array.isArray(rows) ? rows : [];
-      _compareResultSort.key = null;
-      _compareResultSort.dir = "asc";
-      refreshCompareResultTable();
-      emptyEl.style.display = _compareResultRows.length ? "none" : "block";
-      if (!_compareResultRows.length) emptyEl.textContent = "该条件下没有排线差异记录。";
+      void loadCompareDataOnly();
     } catch (err) {
       statusWrap.innerHTML = backendUnreachableHtml(err);
       overviewArea.innerHTML = "";

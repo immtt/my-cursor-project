@@ -332,6 +332,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
         )
 
     db.commit()
+    touched_list = sorted(touched_dates) if touched_dates else []
     return {
         "batch_id": batch_id,
         "total_rows": total_rows,
@@ -339,6 +340,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
         "failed_rows": total_rows - success_rows,
         "errors": errors,
         "same_day_deactivated": same_day_deactivated,
+        "touched_route_dates": [d.isoformat() for d in touched_list],
     }
 
 

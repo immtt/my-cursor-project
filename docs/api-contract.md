@@ -31,9 +31,20 @@
   "success_rows": 96,
   "failed_rows": 4,
   "errors": [{"row": 8, "reason": "配送体积不能为负数"}],
-  "same_day_deactivated": 3
+  "same_day_deactivated": 3,
+  "touched_route_dates": ["2026-04-10", "2026-04-11"],
+  "compare_refresh": {
+    "compare_dates_run": 2,
+    "compare_result_rows": 15,
+    "dates": ["2026-04-10", "2026-04-11"],
+    "calc": { "updated": 2, "failed": 0, "failures": [] }
+  }
 }
 ```
+
+- **`touched_route_dates`**：本批**成功**解析行中出现的排线日（`YYYY-MM-DD` 去重升序），无成功行时可为 `[]` 或缺省（实现以 `import_excel` 返回为准）。
+
+- **`compare_refresh`**：当 `success_rows > 0` 且 `touched_route_dates` 非空时，服务端对**最早～最晚**所涉日执行人工路书补算，再对**各所涉日**各跑一次排线对比。否则为 `null`。若处理失败，可为 `{ "error": "说明" }`。
 
 **去重与当日快照**：同一 `dataset_type` 下，以 **`route_date` + 运单号（`waybill_no`）** 为业务键；已存在则 **更新** 该行（`batch_id` / `import_operator` / `imported_at` 随本次导入刷新），不存在则 **新增**。**导入成功且本批有有效行时**，对**本次成功解析到的各排线日期**分别：将该日期下、未出现在**本批 Excel** 中的运单行 `is_active` 置为 **0**（删除标记，仅**系统表 / 手工表**各自处理，不跨表）。`same_day_deactivated` 为本次被置 0 的总行数（可含多日期之和）。
 
@@ -184,13 +195,22 @@
 - `dataset_type=all`：**不合并两侧**。手工、系统**各自**判断一店多车（同侧该店在当日 ≥2 个运单才返回）。同店可得到 **最多两条** `items`（先手工、后系统），不会把「1 车手工 + 1 车系统」凑成 2 车。
 - 响应另含（与 `items` 同区间与仓库筛选，用于趋势图与下拉）：
   - **`warehouse_options`**：`route_date_from`～`to` 内有效行**始发仓库**去重，有序列表。
-  - **`vehicle_diff`**：**车辆差异**，与 `dataset_type` 无关；在相同 `route_date_from`～`route_date_to` 与 `warehouse_name` 下，对 `sys_suggest` / `manual_route` 中 `is_active=1` 的行按 **`vehicle_type`（车型）** 分组，统计各组**行数**（即车次数，每行一运单）。用于系统与手工两侧对比：
-    - `by_vehicle_type`：`{ "vehicle_type", "system_count", "manual_count", "diff" }` 列表（`diff` = `system_count` − `manual_count`）；车型空串展示为「（未填）」。
-    - `system_total` / `manual_total`：两侧车次数合计。
-    - **`total_vehicle_diff`**：`system_total` − `manual_total`，即**总车辆差异**（与排线概览里「总车次差」同口径：系统侧车次数减手工侧车次数）。
+  - **`vehicle_diff`**：**车辆差异（运单 / 车型）**，与 `dataset_type` 无关；在相同 `route_date_from`～`route_date_to` 与 `warehouse_name` 下，对 `is_active=1` 的**运单行**按 **`vehicle_type`（车型）** 分组，统计各组在系统侧 / 手工侧的**运单数**（每行 1 单，与车辆数一一对应）。车型空串展示为「（未填）」。
+    - `by_vehicle_type`：`{ "vehicle_type", "system_count", "manual_count", "diff" }` 列表。`system_count` / `manual_count` 为该车型下运单数；`diff` = 系统 − 手工。
+    - `system_total` / `manual_total`：各侧**运单总数**（所有车型运单数之和）。
+    - **`total_vehicle_diff`**：`system_total` − `manual_total`（运单合计之差）。
+  - **`store_diff`**：**门店差异（配送面）**，与 `vehicle_diff` 独立；在相同日期与 `warehouse_name` 下，将各运单行「拼载门店」以 `normalize_stores` 展开后按**店名去重**，统计系统 / 手工侧分别涉及的**不重复门店数**，并给出**对称差**名称列表，用于观察运单/车辆变化是否与**配送门店面**变化相关：
+    - `system_store_count` / `manual_store_count` / `diff`（系统 − 手工）。
+    - `only_in_system`：仅在系统侧出现的店名（字符串数组，升序）；`only_in_manual`：仅在手工侧出现的店名（同上）。两侧集合完全一致时二者均为 `[]`。
   - **`trend_by_day`**：区间内**每一个自然日**一行；**系统侧、手工侧**在一店多车判据下，当日「多车店」的**门店个数**（同 `items` 的合并规则与仓库筛选，但**不按** `dataset_type` 再过滤——始终两条序列便于对比）：
     - `system_multi_vehicle_store_count`：仅看系统建议数据时，当日满足一店多车的**门店**数（与只选 `dataset_type=system` 时 `items` 的「店」条数一致）。
     - `manual_multi_vehicle_store_count`：仅看手工时同理。
+  - **`vehicle_store_trend_by_day`**：区间内**逐日**一行，与 `vehicle_diff` / `store_diff` 同口径、与 `dataset_type` 无关；用于一张图内对比**运单数**与**拼载门店去重数**（双纵轴）：
+    - `system_waybill_count` / `manual_waybill_count`：当日 `is_active=1` 的**运单行数**（与车辆差异的运单合计按日折线一致）。
+    - `system_store_count` / `manual_store_count`：当日各侧运单行经 `normalize_stores` 展开后的**不重复店名**个数（与门店差异的「面」按日累加趋势一致，但此处为**逐日**而非区间汇总）。
+  - **`waybill_store_load`**：**运单配载门店**（一车/一单配几家店），与 `warehouse_name`、排线闭区间一致；**随 `dataset_type` 过滤**：`all` 时系统、手工运单均列出；`system` / `manual` 时仅该侧。每条运单一行，拼载门店个数 = `normalize_stores(拼载门店)` 的**去重个数**。
+    - `summary`：`waybill_count`（条数）、`avg_store_count`（全样本平均配载门店数）；`system_waybill_count` / `system_avg_store_count` / `manual_waybill_count` / `manual_avg_store_count`（各侧条数与单均，单侧无数据时为 0）。
+    - `items`：`route_date`、`waybill_no`、`dataset_type`（`system` | `manual`）、`vehicle_type`（空为「（未填）」）、`store_count`（整数）。
 
 ```json
 {
@@ -208,14 +228,21 @@
     "by_vehicle_type": [
       {
         "vehicle_type": "4.2米",
-        "system_count": 12,
-        "manual_count": 10,
+        "system_count": 8,
+        "manual_count": 6,
         "diff": 2
       }
     ],
-    "system_total": 12,
-    "manual_total": 10,
+    "system_total": 20,
+    "manual_total": 18,
     "total_vehicle_diff": 2
+  },
+  "store_diff": {
+    "system_store_count": 15,
+    "manual_store_count": 14,
+    "diff": 1,
+    "only_in_system": ["客户A店"],
+    "only_in_manual": ["客户B店", "客户C店"]
   },
   "warehouse_options": ["华东仓"],
   "trend_by_day": [
@@ -224,7 +251,35 @@
       "system_multi_vehicle_store_count": 0,
       "manual_multi_vehicle_store_count": 1
     }
-  ]
+  ],
+  "vehicle_store_trend_by_day": [
+    {
+      "route_date": "2026-04-20",
+      "system_waybill_count": 12,
+      "manual_waybill_count": 10,
+      "system_store_count": 20,
+      "manual_store_count": 18
+    }
+  ],
+  "waybill_store_load": {
+    "summary": {
+      "waybill_count": 40,
+      "avg_store_count": 2.35,
+      "system_waybill_count": 20,
+      "system_avg_store_count": 2.1,
+      "manual_waybill_count": 20,
+      "manual_avg_store_count": 2.6
+    },
+    "items": [
+      {
+        "route_date": "2026-04-20",
+        "waybill_no": "WB001",
+        "dataset_type": "manual",
+        "vehicle_type": "4.2米",
+        "store_count": 3
+      }
+    ]
+  }
 }
 ```
 

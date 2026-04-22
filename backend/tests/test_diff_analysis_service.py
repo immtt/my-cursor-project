@@ -6,6 +6,7 @@ import pytest
 from app.models.entities import ManualRoute, SysSuggest
 from app.services.diff_analysis_service import (
     list_multi_vehicle_stores,
+    store_diff_summary,
     vehicle_diff_by_type,
 )
 
@@ -29,7 +30,7 @@ def _manual(waybill_no: str, stores: str, route_date: Optional[date] = None):
 
 def test_vehicle_diff_by_type_system_vs_manual(db_session):
     d = date(2026, 6, 1)
-    db_session.add(_manual("M1", "店A", d))
+    db_session.add(_manual("M1", "店A,店B", d))
     db_session.add(_manual("M2", "店B", d))
     m3 = _manual("M3", "店C", d)
     m3.vehicle_type = "6.8米"
@@ -61,6 +62,77 @@ def test_vehicle_diff_by_type_system_vs_manual(db_session):
     assert by["6.8米"]["system_count"] == 0
     assert by["6.8米"]["manual_count"] == 1
     assert by["6.8米"]["diff"] == -1
+    vst = r["vehicle_store_trend_by_day"]
+    assert len(vst) == 1
+    assert vst[0]["route_date"] == d.isoformat()
+    assert vst[0]["system_waybill_count"] == 1
+    assert vst[0]["manual_waybill_count"] == 3
+    assert vst[0]["system_store_count"] == 1
+    assert vst[0]["manual_store_count"] == 3
+    wsl = r["waybill_store_load"]
+    assert wsl["summary"]["waybill_count"] == 4
+    assert wsl["summary"]["avg_store_count"] == 1.25
+    assert wsl["summary"]["system_avg_store_count"] == 1.0
+    assert wsl["summary"]["manual_avg_store_count"] == 1.33
+    by_wb = {x["waybill_no"]: x for x in wsl["items"]}
+    assert by_wb["M1"]["store_count"] == 2
+    assert by_wb["M3"]["store_count"] == 1
+    sd = r["store_diff"]
+    assert sd["system_store_count"] == 1
+    assert sd["manual_store_count"] == 3
+    assert sd["diff"] == -2
+    assert sd["only_in_system"] == ["店D"]
+    assert set(sd["only_in_manual"]) == {"店A", "店B", "店C"}
+
+
+def test_store_diff_only_sides_and_symmetric_equal(db_session):
+    """门店对称差：仅系统 / 仅手工 列表与两侧集合一致时为空。"""
+    d = date(2026, 8, 1)
+    db_session.add(
+        SysSuggest(
+            route_date=d,
+            waybill_no="S1",
+            route_line="L",
+            warehouse_name="W1",
+            stores="公店,仅系统",
+            vehicle_type="4.2米",
+            volume=1.0,
+            load_rate=50.0,
+            est_distance=10.0,
+            est_duration=20,
+        )
+    )
+    db_session.add(_manual("M1", "公店,仅手工", d))
+    db_session.commit()
+    sd = store_diff_summary(db_session, d, d, None)
+    assert sd["only_in_system"] == ["仅系统"]
+    assert sd["only_in_manual"] == ["仅手工"]
+    sd_same = store_diff_summary(db_session, d, d, "W1")
+    assert sd_same["only_in_system"] == ["仅系统"]
+    assert sd_same["only_in_manual"] == ["仅手工"]
+
+
+def test_store_diff_both_sides_identical_stores_empty_lists(db_session):
+    d = date(2026, 8, 2)
+    db_session.add(
+        SysSuggest(
+            route_date=d,
+            waybill_no="S1",
+            route_line="L",
+            warehouse_name="W1",
+            stores="同店",
+            vehicle_type="4.2米",
+            volume=1.0,
+            load_rate=50.0,
+            est_distance=10.0,
+            est_duration=20,
+        )
+    )
+    db_session.add(_manual("M1", "同店", d))
+    db_session.commit()
+    sd = store_diff_summary(db_session, d, d, None)
+    assert sd["only_in_system"] == []
+    assert sd["only_in_manual"] == []
 
 
 def test_vehicle_diff_respects_warehouse_filter(db_session):
@@ -77,6 +149,39 @@ def test_vehicle_diff_respects_warehouse_filter(db_session):
     assert vd["manual_total"] == 1
     assert vd["system_total"] == 0
     assert vd["total_vehicle_diff"] == -1
+
+
+def test_vehicle_diff_counts_waybills_same_store_multiple_trips(db_session):
+    """同车型、多运单、同一拼载店 → 运单数按行计。"""
+    d = date(2026, 7, 1)
+    db_session.add(_manual("M1", "店X", d))
+    db_session.add(_manual("M2", "店X", d))
+    db_session.commit()
+    vd = vehicle_diff_by_type(db_session, d, d, None)
+    by = {x["vehicle_type"]: x for x in vd["by_vehicle_type"]}
+    assert by["4.2米"]["manual_count"] == 2
+    assert vd["manual_total"] == 2
+    sd = store_diff_summary(db_session, d, d, None)
+    assert sd["manual_store_count"] == 1
+
+
+def test_vehicle_diff_waybills_across_vehicle_types(db_session):
+    """同一店两车型两条运单：各车型 1 单，运单合计 2。"""
+    d = date(2026, 7, 2)
+    m1 = _manual("M1", "店Z", d)
+    m1.vehicle_type = "4.2米"
+    m2 = _manual("M2", "店Z", d)
+    m2.vehicle_type = "6.8米"
+    db_session.add(m1)
+    db_session.add(m2)
+    db_session.commit()
+    vd = vehicle_diff_by_type(db_session, d, d, None)
+    by = {x["vehicle_type"]: x for x in vd["by_vehicle_type"]}
+    assert by["4.2米"]["manual_count"] == 1
+    assert by["6.8米"]["manual_count"] == 1
+    assert vd["manual_total"] == 2
+    sd = store_diff_summary(db_session, d, d, None)
+    assert sd["manual_store_count"] == 1
 
 
 def test_multi_vehicle_three_waybills_one_store(db_session):

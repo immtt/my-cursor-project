@@ -1,8 +1,42 @@
 from datetime import date
 
 from app.models.entities import ManualRoute, SysSuggest
-from app.services.compare_service import overview, run_compare
+from app.services.compare_service import overview, refresh_compare_after_import, run_compare
 from app.services.result_service import fetch_results
+
+
+def test_refresh_compare_after_import_runs_touched_day(db_session):
+    db_session.add(
+        SysSuggest(
+            route_date=date(2026, 4, 20),
+            waybill_no="SYS001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=date(2026, 4, 20),
+            waybill_no="MAN001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲",
+            vehicle_type="4.2米",
+            volume=10.0,
+            load_rate=68,
+            calc_status=0,
+        )
+    )
+    db_session.commit()
+    out = refresh_compare_after_import(db_session, [date(2026, 4, 20)], 0.5)
+    assert out["compare_dates_run"] == ["2026-04-20"]
+    assert out["compare_result_rows"] >= 1
 
 
 def test_run_compare_generates_match(db_session):
@@ -13,6 +47,7 @@ def test_run_compare_generates_match(db_session):
             route_line="线路A",
             warehouse_name="仓库1",
             stores="门店甲,门店乙",
+            vehicle_type="4.2米",
             volume=9.0,
             load_rate=70,
             est_distance=40,
@@ -26,6 +61,7 @@ def test_run_compare_generates_match(db_session):
             route_line="线路A",
             warehouse_name="仓库1",
             stores="门店乙,门店甲",
+            vehicle_type="4.2米",
             volume=10.0,
             load_rate=68,
             est_distance=42,

@@ -23,7 +23,7 @@ from app.schemas.requests import (
     StorePairDistanceCreate,
     StorePairDistanceUpdate,
 )
-from app.services.compare_service import overview, run_compare
+from app.services.compare_service import overview, refresh_compare_after_import, run_compare
 from app.services.diff_analysis_service import list_multi_vehicle_stores
 from app.services.gaode_service import (
     backfill_manual_routes_by_batch,
@@ -193,6 +193,13 @@ async def import_data(
             raise HTTPException(status_code=400, detail="请上传有效的 .xlsx 文件（非 zip/xlsx 格式无法解析）") from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if (result.get("success_rows") or 0) > 0 and result.get("touched_route_dates"):
+            try:
+                dates = [date.fromisoformat(str(s)) for s in result["touched_route_dates"] if s]
+                if dates:
+                    result["compare_refresh"] = refresh_compare_after_import(db, dates)
+            except (ValueError, TypeError) as e:
+                result["compare_refresh"] = {"error": str(e)}
     finally:
         os.remove(tmp_path)
     return result
