@@ -11,8 +11,21 @@ from app.services.import_service import import_excel
 def _create_system_excel(path: str, volume: float):
     wb = Workbook()
     ws = wb.active
-    ws.append(["排线日期", "运单号", "归属线路", "始发仓库", "拼载门店", "配送体积", "装载率", "预计公里数", "预计时效"])
-    ws.append(["2026-04-20", "SYS001", "线路A", "仓库1", "门店甲,门店乙", volume, "70%", 30, 60])
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(["2026-04-20", "SYS001", "线路A", "仓库1", "门店甲,门店乙", "4.2米标箱", volume, "70%", 30, 60])
     wb.save(path)
 
 

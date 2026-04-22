@@ -280,11 +280,14 @@ function renderResult() {
             <th>地图</th>
             <th>系统运单</th>
             <th>手工运单</th>
+            <th>系统车型</th>
+            <th>手工车型</th>
             <th>匹配状态</th>
             <th>门店匹配率</th>
             <th>匹配度</th>
             <th>体积差异</th>
             <th>线路一致</th>
+            <th>车型一致</th>
             <th>里程差</th>
             <th>时效差</th>
           </tr>
@@ -320,11 +323,14 @@ function renderResult() {
             <td><button type="button" class="btn btn--map map-btn" data-crid="${r.id}">地图</button></td>
             <td>${r.sys_waybill_no ?? "—"}</td>
             <td>${r.manual_waybill_no ?? "—"}</td>
+            <td>${r.sys_vehicle_type ?? "—"}</td>
+            <td>${r.manual_vehicle_type ?? "—"}</td>
             <td>${matchStatusBadge(r.match_status)}</td>
             <td>${r.store_match_rate ?? "—"}</td>
             <td>${r.match_score ?? "—"}</td>
             <td>${r.volume_diff ?? "—"}</td>
             <td>${r.line_consistent ? "是" : "否"}</td>
+            <td>${r.vehicle_type_consistent == null ? "—" : r.vehicle_type_consistent ? "是" : "否"}</td>
             <td>${r.est_distance_diff ?? "—"}</td>
             <td>${r.est_duration_diff ?? "—"}</td>
           </tr>`
@@ -390,8 +396,10 @@ function renderRouteMap() {
     metaEl.innerHTML = `
       <div><strong>${data.warehouse_name || "—"}</strong></div>
       <div style="margin-top:8px">${matchStatusBadge(data.match_status)} 
-        <span style="margin-left:12px;color:var(--text-secondary)">系统 <strong>${data.sys_waybill_no ?? "—"}</strong></span>
-        <span style="margin-left:12px;color:var(--text-secondary)">手工 <strong>${data.manual_waybill_no ?? "—"}</strong></span>
+        <span style="margin-left:12px;color:var(--text-secondary)">系统 <strong>${data.sys_waybill_no ?? "—"}</strong>
+          <small>（${data.sys_vehicle_type ?? "—"}）</small></span>
+        <span style="margin-left:12px;color:var(--text-secondary)">手工 <strong>${data.manual_waybill_no ?? "—"}</strong>
+          <small>（${data.manual_vehicle_type ?? "—"}）</small></span>
       </div>
       <div class="legend">
         <span><span style="color:#1677FF;font-weight:700">■</span> 系统路线</span>

@@ -20,6 +20,7 @@ def test_import_accepts_parenthetical_unit_headers(db_session):
             "归属线路",
             "始发仓库",
             "拼载门店",
+            "车辆类型",
             "配送体积(m³)",
             "装载率(%)",
             "预计公里数",
@@ -33,6 +34,7 @@ def test_import_accepts_parenthetical_unit_headers(db_session):
             "线路A",
             "仓库1",
             "门店甲",
+            "4.2米标箱",
             14.19,
             76,
             78.19,
@@ -48,3 +50,4 @@ def test_import_accepts_parenthetical_unit_headers(db_session):
     assert row.load_rate == 76.0
     assert row.est_distance == 78.19
     assert row.est_duration == 92
+    assert row.vehicle_type == "4.2米标箱"

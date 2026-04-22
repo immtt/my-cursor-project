@@ -37,8 +37,16 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                 if abs_volume_diff < best_abs_volume_diff:
                     best = man_row
                     best_abs_volume_diff = abs_volume_diff
-                elif abs_volume_diff == best_abs_volume_diff and best and man_row.waybill_no < best.waybill_no:
-                    best = man_row
+                elif abs_volume_diff == best_abs_volume_diff and best:
+                    sys_vt = (sys_row.vehicle_type or "").strip()
+                    b_vt = (best.vehicle_type or "").strip()
+                    m_vt = (man_row.vehicle_type or "").strip()
+                    if sys_vt == m_vt and sys_vt != b_vt:
+                        best = man_row
+                    elif sys_vt != m_vt and sys_vt == b_vt:
+                        pass
+                    elif man_row.waybill_no < best.waybill_no:
+                        best = man_row
 
         if best is None:
             db.add(

@@ -66,6 +66,8 @@ def build_route_map_payload(db: Session, compare_result_id: int) -> dict:
         "match_status": cr.match_status,
         "sys_waybill_no": sys_waybill,
         "manual_waybill_no": manual_waybill,
+        "sys_vehicle_type": sys_row.vehicle_type if sys_row else None,
+        "manual_vehicle_type": manual_row.vehicle_type if manual_row else None,
         "warehouse_name": warehouse_name,
         "system": _side_system(db, sys_row),
         "manual": _side_manual(db, manual_row),

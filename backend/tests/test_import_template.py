@@ -20,6 +20,7 @@ def test_build_import_template_system_columns():
         "归属线路",
         "始发仓库",
         "拼载门店",
+        "车辆类型",
         "配送体积",
         "装载率",
         "预计公里数",

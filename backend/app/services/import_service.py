@@ -16,6 +16,7 @@ REQUIRED_COLUMNS = [
     "归属线路",
     "始发仓库",
     "拼载门店",
+    "车辆类型",
     "配送体积",
     "装载率",
 ]
@@ -50,6 +51,7 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 "归属线路",
                 "始发仓库",
                 "拼载门店",
+                "车辆类型",
                 "配送体积",
                 "装载率",
                 "预计公里数",
@@ -63,6 +65,7 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 "示例线路",
                 "示例仓库",
                 "示例门店甲,示例门店乙",
+                "4.2米标箱",
                 10.5,
                 75,
                 45.0,
@@ -78,6 +81,7 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 "归属线路",
                 "始发仓库",
                 "拼载门店",
+                "车辆类型",
                 "配送体积",
                 "装载率",
             ]
@@ -89,6 +93,7 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
                 "示例线路",
                 "示例仓库",
                 "示例门店甲,示例门店乙",
+                "4.2米高栏",
                 10.5,
                 75,
             ]
@@ -137,11 +142,12 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
             route_line = str(values[header_map["归属线路"]]).strip()
             warehouse_name = str(values[header_map["始发仓库"]]).strip()
             stores = str(values[header_map["拼载门店"]]).strip()
+            vehicle_type = str(values[header_map["车辆类型"]]).strip()
             volume = float(values[header_map["配送体积"]])
             load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
 
-            if not all([waybill_no, route_line, warehouse_name, stores]):
-                raise ValueError("文本字段存在空值")
+            if not all([waybill_no, route_line, warehouse_name, stores, vehicle_type]):
+                raise ValueError("文本字段存在空值（含车辆类型）")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
 
@@ -156,6 +162,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
                         route_line=route_line,
                         warehouse_name=warehouse_name,
                         stores=stores,
+                        vehicle_type=vehicle_type,
                         volume=volume,
                         load_rate=load_rate,
                         est_distance=est_distance,
@@ -170,6 +177,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
                         route_line=route_line,
                         warehouse_name=warehouse_name,
                         stores=stores,
+                        vehicle_type=vehicle_type,
                         volume=volume,
                         load_rate=load_rate,
                     )
