@@ -1,17 +1,27 @@
 from datetime import date
 from typing import Optional
 
+import logging
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.routes import router
+from app.db.import_dedupe import dedupe_import_tables_and_apply_unique
 from app.db.session import Base, engine, ensure_sqlite_schema, get_db
 import app.models.entities  # noqa: F401  — 全量注册 ORM 表（含新表）供 create_all
 from app.middleware.dev_cors import DevCorsASGIMiddleware
 from app.services.import_service import fetch_active_import_page, fetch_import_batch_page
 
+log = logging.getLogger(__name__)
+
 Base.metadata.create_all(bind=engine)
 ensure_sqlite_schema()
+try:
+    _dedupe_stats = dedupe_import_tables_and_apply_unique(engine)
+    if any(_dedupe_stats.values()):
+        log.info("import 表 (sys_suggest / manual_route) 去重完成: %s", _dedupe_stats)
+except Exception:
+    log.exception("import 表去重或唯一索引创建失败，请检查数据库后重试，或执行 scripts/dedupe_import_tables.py")
 
 _core = FastAPI(title="Smart Route Compare API")
 _core.include_router(router, prefix="/api")

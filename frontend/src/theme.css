@@ -627,6 +627,53 @@ select:focus {
   white-space: nowrap;
 }
 
+/* 线路差异结果：可排序表头（▲▼ 小三角） */
+.data-table .th-sort {
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+}
+
+.data-table .th-sort:hover {
+  background: #eef2f7;
+  color: var(--text);
+}
+
+.data-table .th-sort__text {
+  margin-right: 4px;
+}
+
+.data-table .th-sort__icons {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  vertical-align: middle;
+  gap: 0;
+  line-height: 1;
+  font-size: 0.55em;
+  color: var(--border);
+  opacity: 0.85;
+}
+
+.data-table .th-sort__u,
+.data-table .th-sort__d {
+  display: block;
+  line-height: 0.65;
+  color: #c5cad4;
+}
+
+.data-table .th-sort--on.th-sort--asc .th-sort__u {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.data-table .th-sort--on.th-sort--desc .th-sort__d {
+  color: var(--primary);
+  opacity: 1;
+}
+
 .data-table td {
   padding: 11px 14px;
   border-bottom: 1px solid var(--border);
@@ -797,6 +844,129 @@ select:focus {
   overflow: hidden;
 }
 
+/* 路线地图：常显标注（高德 label 内 HTML） */
+.route-map-pin-label {
+  min-width: 4.5rem;
+  max-width: 11rem;
+  padding: 4px 7px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+  color: #1e293b;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  word-break: break-all;
+  pointer-events: none;
+}
+
+.route-map-pin-label__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.route-map-pin-label__seq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #2563eb;
+  border-radius: 4px;
+}
+
+.route-map-pin-label__kind {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.route-map-pin-label__nm {
+  font-weight: 600;
+  font-size: 11px;
+  color: #0f172a;
+}
+
+.map-layout .route-map-leg-panel {
+  margin-top: 14px;
+  padding: 12px 16px;
+  font-size: 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.map-layout .route-map-leg-panel__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.map-layout .route-map-leg-panel__head {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.map-layout .route-map-leg-panel__empty {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.map-layout .route-map-leg-ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-layout .route-map-leg-ul li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.45;
+}
+
+.map-layout .route-map-leg-ul li:last-child {
+  border-bottom: none;
+}
+
+.map-layout .route-map-leg-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.map-layout .route-map-leg-km {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.map-layout .route-map-leg-note {
+  margin: 12px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
 .alert {
   padding: 12px 16px;
   border-radius: var(--radius-sm);
@@ -877,6 +1047,59 @@ select:focus {
   }
 }
 
+/* 客户主数据：宽表横向滚动、列宽由 <colgroup> + 拖动/本机记录控制 */
+.cp-table-scroll {
+  max-width: 100%;
+}
+.data-table--cp {
+  min-width: max(100%, 1200px);
+  font-size: 0.88rem;
+  table-layout: fixed;
+}
+.data-table--cp th.cp-th,
+.data-table--cp .cp-list-cell {
+  max-width: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+.data-table--cp th.cp-th {
+  position: relative;
+  padding-right: 8px;
+}
+.data-table--cp th.cp-th--action {
+  width: 5.5rem;
+  white-space: nowrap;
+}
+.data-table--cp th.cp-th .cp-th__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 2px;
+}
+.data-table--cp .cp-resize-h {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+  border-radius: 1px 0 0 1px;
+  background: transparent;
+  touch-action: none;
+}
+.data-table--cp th.cp-th:hover .cp-resize-h {
+  background: rgba(37, 99, 235, 0.12);
+}
+.data-table--cp th:last-of-type,
+.data-table--cp .table-actions {
+  max-width: none;
+  width: 1%;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .sidebar {
     width: 200px;
@@ -905,21 +1128,3 @@ select:focus {
   }
 }
 
-/* 差异分析：一店多车运单与项次（表内列表框式区域） */
-.diff-wb-list {
-  margin: 0;
-  padding: 6px 8px 6px 22px;
-  max-width: 28rem;
-  max-height: 8.5rem;
-  overflow: auto;
-  list-style: disc;
-  font-size: 0.9rem;
-  line-height: 1.45;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-
-.diff-wb-list code {
-  font-size: 0.88em;
-}

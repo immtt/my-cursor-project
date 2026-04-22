@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import math
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -15,6 +16,28 @@ from app.models.entities import AddressCache, GaodeCalcFailureLog, ManualRoute, 
 
 _AMAP_BASE = "https://restapi.amap.com/v3"
 _HTTPX_TIMEOUT = 20.0
+
+# region agent log
+_AGENT_DEBUG_LOG = "/Users/doriswu/Desktop/智能排线项目/.cursor/debug-46831c.log"
+
+
+def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "46831c",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# endregion agent log
 
 
 def _mock_geocode(address_name: str) -> tuple[float, float]:
@@ -173,29 +196,20 @@ def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[fl
     return lng, lat
 
 
-def _haversine_km(a: Tuple[float, float], b: Tuple[float, float]) -> float:
-    lng1, lat1, lng2, lat2 = a[0], a[1], b[0], b[1]
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dlat, dlng = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
-    h = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlng / 2) ** 2
-    return 2 * r * math.asin(min(1.0, math.sqrt(h)))
-
-
-def _nearest_neighbor_order(
-    warehouse_xy: Tuple[float, float], store_names: List[str], coord_map: Dict[str, Tuple[float, float]]
+def _visit_stores_csv_order(
+    stores: List[str], coord_map: Dict[str, Tuple[float, float]]
 ) -> List[str]:
-    remaining = [n for n in store_names if n in coord_map]
-    if not remaining:
-        return []
-    order: List[str] = []
-    cur = warehouse_xy
-    while remaining:
-        best = min(remaining, key=lambda n: _haversine_km(cur, coord_map[n]))
-        order.append(best)
-        remaining.remove(best)
-        cur = coord_map[best]
-    return order
+    """与拼载 CSV 顺序一致（去重保留首次出现），与未启用高德时的 estimate_route 一致。"""
+    seen: set[str] = set()
+    out: List[str] = []
+    for raw in stores:
+        s = (raw or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        if s in coord_map:
+            out.append(s)
+    return out
 
 
 def _parse_amap_step_points(steps: list) -> List[List[float]]:
@@ -267,21 +281,29 @@ def map_path_from_markers(markers: List[dict]) -> Optional[List[List[float]]]:
 def estimate_manual_route_amap(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[float, int, List[List[float]], List[str]]:
-    """高德驾车路径串联；门店顺序为从仓出发的最近邻序。返回 (km, 分钟, 折线点, 门店顺序)。"""
+    """高德驾车路径串联；途经顺序与导入「拼载门店」CSV 一致（非最近邻重排）。返回 (km, 分钟, 折线点, 门店顺序)。"""
     w_xy = resolve_lnglat_for_manual(db, warehouse, kind="warehouse")
     coord_map: Dict[str, Tuple[float, float]] = {}
     for s in stores:
         coord_map[s] = resolve_lnglat_for_manual(db, s, kind="store")
-    visit_stores = _nearest_neighbor_order(w_xy, stores, coord_map)
+    visit_stores = _visit_stores_csv_order(stores, coord_map)
     if not visit_stores:
         return 0.0, 0, [], []
     total_m = 0.0
     total_s = 0.0
     merged: List[List[float]] = []
+    legs_metrics: List[dict] = []
     cur = w_xy
     for sn in visit_stores:
         nxt = coord_map[sn]
         dm, ds, leg_pts = _amap_driving_leg(cur, nxt)
+        legs_metrics.append(
+            {
+                "to_store": sn[:60],
+                "dist_m": round(float(dm), 2),
+                "dur_raw": round(float(ds), 2),
+            }
+        )
         total_m += dm
         total_s += ds
         if leg_pts:
@@ -295,19 +317,61 @@ def estimate_manual_route_amap(
         cur = nxt
     dur_min = max(1, int(round(total_s / 60)))
     dist_km = round(total_m / 1000.0, 2)
+    # region agent log
+    _agent_debug_log(
+        "H1-H3",
+        "gaode_service:estimate_manual_route_amap",
+        "amap_chain_totals",
+        {
+            "warehouse": (warehouse or "")[:80],
+            "visit_store_count": len(visit_stores),
+            "legs": legs_metrics,
+            "total_m": round(total_m, 2),
+            "total_s_raw_sum": round(total_s, 2),
+            "dist_km": dist_km,
+            "dur_min": dur_min,
+            "w_xy": [round(w_xy[0], 5), round(w_xy[1], 5)],
+        },
+    )
+    # endregion agent log
     return dist_km, dur_min, merged, visit_stores
 
 
 def estimate_bundle_for_manual(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[Tuple[float, int, List[List[float]]], List[str]]:
-    if amap_rest_enabled():
+    amap_on = amap_rest_enabled()
+    if amap_on:
         try:
             dist, dur, path, order = estimate_manual_route_amap(db, warehouse, stores)
+            # region agent log
+            _agent_debug_log(
+                "H4",
+                "gaode_service:estimate_bundle_for_manual",
+                "branch_amap_success",
+                {"amap_on": True, "dist": dist, "dur": dur, "store_count": len(stores)},
+            )
+            # endregion agent log
             return (dist, dur, path), order
-        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+            # region agent log
+            _agent_debug_log(
+                "H4",
+                "gaode_service:estimate_bundle_for_manual",
+                "branch_amap_exception_fallback",
+                {"amap_on": True, "exc_type": type(exc).__name__, "exc_msg": str(exc)[:300]},
+            )
+            # endregion agent log
             pass
     dist, dur, path = estimate_route(warehouse, stores, db)
+    # region agent log
+    _agent_debug_log(
+        "H4",
+        "gaode_service:estimate_bundle_for_manual",
+        "branch_estimate_route_fallback",
+        {"amap_on": amap_on, "dist": dist, "dur": dur, "store_count": len(stores)},
+    )
+    # endregion agent log
     return (dist, dur, path), list(stores)
 
 
@@ -418,6 +482,7 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
     failures = []
     for row in rows:
         stores = [s.strip() for s in row.stores.split(",") if s.strip()]
+        prev_d, prev_t = row.est_distance, row.est_duration
         result, retry_count, err = _estimate_manual_bundle_with_retry(row.warehouse_name, stores, db)
         if result:
             (dist, dur, path), order = result
@@ -439,6 +504,21 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
                 slng, slat = resolve_lnglat_for_manual(db, s0, kind="store")
                 sync_resolved_lnglat_to_cache_tables(db, s0, "store", slng, slat)
             updated += 1
+            # region agent log
+            _agent_debug_log(
+                "H5",
+                "gaode_service:_run_manual_backfill_for_rows",
+                "backfill_updated",
+                {
+                    "waybill_no": (row.waybill_no or "")[:32],
+                    "prev_est_distance": prev_d,
+                    "prev_est_duration": prev_t,
+                    "new_est_distance": dist,
+                    "new_est_duration": dur,
+                    "retry_count": retry_count,
+                },
+            )
+            # endregion agent log
         else:
             row.calc_status = 2
             failed += 1
@@ -454,6 +534,20 @@ def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
                     last_retry_at=datetime.now(),
                 )
             )
+            # region agent log
+            _agent_debug_log(
+                "H5",
+                "gaode_service:_run_manual_backfill_for_rows",
+                "backfill_failed",
+                {
+                    "waybill_no": (row.waybill_no or "")[:32],
+                    "prev_est_distance": prev_d,
+                    "prev_est_duration": prev_t,
+                    "retry_count": retry_count,
+                    "err": (err or "")[:300],
+                },
+            )
+            # endregion agent log
     db.commit()
     return {"updated": updated, "failed": failed, "failures": failures}
 

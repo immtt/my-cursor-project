@@ -91,18 +91,11 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-/** 差异分析行项目：与后端 dataset_type 一致。 */
+/** 差异分析行项目：与后端 `waybills[].dataset_type` 一致，枚举仅 `system` | `manual`（与筛选里「全部」不同）。 */
 function diffDatasetTypeLabel(t) {
   if (t === "system") return "系统建议";
   if (t === "manual") return "手工排线";
-  return "";
-}
-
-function diffDatasetTypeTagSpan(datasetType) {
-  const label = diffDatasetTypeLabel(datasetType);
-  if (!label) return "";
-  const cls = datasetType === "system" ? "waybill-tag waybill-tag--system" : "waybill-tag waybill-tag--manual";
-  return `<span class="${cls}">${escapeHtml(label)}</span> · `;
+  return "—";
 }
 
 /** 线路差异表：系统与手工运单同列，用标签区分。 */
@@ -694,6 +687,157 @@ function matchStatusBadge(status) {
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
+let _compareResultRows = [];
+const _compareResultSort = { key: null, dir: "asc" };
+
+function _compareValueForKey(r, key) {
+  switch (key) {
+    case "waybill":
+      return [String(r.sys_waybill_no ?? ""), String(r.manual_waybill_no ?? "")].join("\0");
+    case "sys_vehicle_type":
+      return String(r.sys_vehicle_type ?? "");
+    case "manual_vehicle_type":
+      return String(r.manual_vehicle_type ?? "");
+    case "match_status": {
+      const o = { full: 0, partial: 1, none: 2 };
+      return o[r.match_status] != null ? o[r.match_status] : 9;
+    }
+    case "store_match_rate": {
+      const n = Number(r.store_match_rate);
+      return Number.isFinite(n) ? n : null;
+    }
+    case "same_stores":
+      return String(r.same_stores ?? "");
+    case "diff_stores": {
+      if (r.diff_stores != null && String(r.diff_stores).length) return String(r.diff_stores);
+      return [r.diff_stores_system, r.diff_stores_manual]
+        .filter((x) => x != null && String(x) !== "")
+        .join(" ");
+    }
+    case "match_score": {
+      const n = Number(r.match_score);
+      return Number.isFinite(n) ? n : null;
+    }
+    case "volume_diff": {
+      if (r.volume_diff == null || r.volume_diff === "") return null;
+      const n = Number(r.volume_diff);
+      return Number.isFinite(n) ? n : null;
+    }
+    case "line_consistent":
+      return r.line_consistent ? 1 : 0;
+    case "vehicle_type_consistent": {
+      if (r.vehicle_type_consistent == null) return -1;
+      return r.vehicle_type_consistent ? 1 : 0;
+    }
+    case "est_distance_diff": {
+      if (r.est_distance_diff == null || r.est_distance_diff === "") return null;
+      const n = Number(r.est_distance_diff);
+      return Number.isFinite(n) ? n : null;
+    }
+    case "est_duration_diff": {
+      if (r.est_duration_diff == null || r.est_duration_diff === "") return null;
+      const n = Number(r.est_duration_diff);
+      return Number.isFinite(n) ? n : null;
+    }
+    default:
+      return "";
+  }
+}
+
+function getSortedCompareResultRows() {
+  const base = _compareResultRows;
+  if (!_compareResultSort.key) return base;
+  const { key, dir } = _compareResultSort;
+  const mult = dir === "asc" ? 1 : -1;
+  const withIdx = base.map((r, i) => ({ r, i }));
+  withIdx.sort((A, B) => {
+    const va = _compareValueForKey(A.r, key);
+    const vb = _compareValueForKey(B.r, key);
+    if (va == null && vb == null) {
+      // continue
+    } else if (va == null) {
+      return 1;
+    } else if (vb == null) {
+      return -1;
+    }
+    let c = 0;
+    if (typeof va === "number" && typeof vb === "number") {
+      c = va - vb;
+    } else {
+      c = String(va).localeCompare(String(vb), "zh-Hans", { numeric: true, sensitivity: "base" });
+    }
+    if (c !== 0) return c * mult;
+    return A.i - B.i;
+  });
+  return withIdx.map((x) => x.r);
+}
+
+function buildCompareResultTableRowsHtml(rows) {
+  return rows
+    .map(
+      (r) =>
+        `<tr>
+            <td><button type="button" class="btn btn--map map-btn" data-crid="${r.id}">地图</button></td>
+            ${formatCompareWaybillCell(r.sys_waybill_no, r.manual_waybill_no)}
+            <td>${r.sys_vehicle_type ?? "—"}</td>
+            <td>${r.manual_vehicle_type ?? "—"}</td>
+            <td>${matchStatusBadge(r.match_status)}</td>
+            <td>${r.store_match_rate ?? "—"}</td>
+            <td class="cell-stores">${r.same_stores != null && r.same_stores !== "" ? escapeHtml(String(r.same_stores)) : "—"}</td>
+            ${formatDiffStoresCell(r.diff_stores_system, r.diff_stores_manual)}
+            <td>${r.match_score ?? "—"}</td>
+            <td>${r.volume_diff ?? "—"}</td>
+            <td>${r.line_consistent ? "是" : "否"}</td>
+            <td>${r.vehicle_type_consistent == null ? "—" : r.vehicle_type_consistent ? "是" : "否"}</td>
+            <td>${r.est_distance_diff ?? "—"}</td>
+            <td>${r.est_duration_diff ?? "—"}</td>
+          </tr>`,
+    )
+    .join("");
+}
+
+function compareSortableTh(text, key) {
+  return `<th class="th-sort" data-cmp-sort="${key}" tabindex="0" role="columnheader" scope="col" title="点击切换排序" aria-sort="none">
+  <span class="th-sort__text">${text}</span>
+  <span class="th-sort__icons" aria-hidden="true">
+    <span class="th-sort__u">▲</span><span class="th-sort__d">▼</span>
+  </span>
+</th>`;
+}
+
+function refreshCompareResultThead() {
+  const tr = document.querySelector(".data-table--compare-sort thead tr");
+  if (!tr) return;
+  for (const th of tr.querySelectorAll("th[data-cmp-sort]")) {
+    const k = th.getAttribute("data-cmp-sort");
+    th.classList.remove("th-sort--asc", "th-sort--desc", "th-sort--on");
+    if (_compareResultSort.key === k) {
+      th.classList.add("th-sort--on", _compareResultSort.dir === "asc" ? "th-sort--asc" : "th-sort--desc");
+      th.setAttribute("aria-sort", _compareResultSort.dir === "asc" ? "ascending" : "descending");
+    } else {
+      th.setAttribute("aria-sort", "none");
+    }
+  }
+}
+
+function refreshCompareResultTable() {
+  const tbody = document.getElementById("resultTable");
+  if (!tbody) return;
+  tbody.innerHTML = buildCompareResultTableRowsHtml(getSortedCompareResultRows());
+  refreshCompareResultThead();
+}
+
+function onCompareResultSortThClick(key) {
+  if (!key) return;
+  if (_compareResultSort.key === key) {
+    _compareResultSort.dir = _compareResultSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    _compareResultSort.key = key;
+    _compareResultSort.dir = "asc";
+  }
+  refreshCompareResultTable();
+}
+
 function fillCompareWarehouseSelect(selectEl, overviewPayload, preserveValue) {
   if (!selectEl) return;
   const opts = (overviewPayload && overviewPayload.warehouse_options) || [];
@@ -713,6 +857,10 @@ function overviewSection(o) {
       <div class="stat-card"><span class="stat-label">完全匹配</span><span class="stat-value">${n(o.full_count)}</span></div>
       <div class="stat-card"><span class="stat-label">部分匹配</span><span class="stat-value">${n(o.partial_count)}</span></div>
       <div class="stat-card"><span class="stat-label">未匹配</span><span class="stat-value">${n(o.none_count)}</span></div>
+      <div class="stat-card"><span class="stat-label">总车次差</span><span class="stat-value">${n(o.total_trip_diff)}</span></div>
+      <div class="stat-card"><span class="stat-label">总体积差</span><span class="stat-value">${n(o.total_volume_diff)}</span></div>
+      <div class="stat-card"><span class="stat-label">总公里差</span><span class="stat-value">${n(o.total_distance_diff)}</span></div>
+      <div class="stat-card"><span class="stat-label">总时长差</span><span class="stat-value">${n(o.total_duration_diff)}</span></div>
       <div class="stat-card"><span class="stat-label">平均体积差</span><span class="stat-value">${n(o.avg_volume_diff)}</span></div>
       <div class="stat-card"><span class="stat-label">平均里程差</span><span class="stat-value">${n(o.avg_distance_diff)}</span></div>
       <div class="stat-card"><span class="stat-label">平均时效差</span><span class="stat-value">${n(o.avg_duration_diff)}</span></div>
@@ -759,7 +907,7 @@ function renderDiffAnalysis() {
   const defaultDay = dr.to;
   app.innerHTML = `
     <div class="page-head page-head--compact">
-      <p><small class="empty-hint">选择<strong>排线日期</strong>与<strong>数据类型</strong>，查询当日<strong>一店多车</strong>：同一门店出现在多个运单时列出；仅出现在一个运单中的门店不显示。项次为同一门店下运单号排序后的序号。<strong>全部</strong>为当日系统建议与手动排线有效数据合并统计。</small></p>
+      <p><small class="empty-hint">选择<strong>排线日期</strong>与<strong>数据范围</strong>，查询当日<strong>一店多车</strong>。运单级来源为<strong>系统建议 / 手工排线</strong>两值之一。选「全部（合并）」时表格多一列「来源」；选「仅系统 / 仅手工」时与筛选一致，不重复该列。</small></p>
     </div>
     <div class="toolbar">
       <div class="field">
@@ -767,11 +915,11 @@ function renderDiffAnalysis() {
         <input type="date" id="diffAnalysisDate" value="${escapeHtml(defaultDay)}" />
       </div>
       <div class="field">
-        <span class="field-label">数据类型</span>
+        <span class="field-label">数据范围</span>
         <select id="diffAnalysisDataset">
-          <option value="all" selected>全部</option>
-          <option value="system">系统建议数据</option>
-          <option value="manual">手动排线数据</option>
+          <option value="all" selected>全部（合并）</option>
+          <option value="system">仅系统建议</option>
+          <option value="manual">仅手工排线</option>
         </select>
       </div>
       <button type="button" class="btn btn--primary" id="diffAnalysisQuery">查询</button>
@@ -779,10 +927,12 @@ function renderDiffAnalysis() {
     <div class="table-scroll">
       <table class="data-table" id="diffAnalysisTable" aria-label="一店多车">
         <thead>
-          <tr>
+          <tr id="diffAnalysisTheadRow">
             <th>门店名称</th>
-            <th style="width:7rem">运单数</th>
-            <th>运单与项次</th>
+            <th style="width:6rem">运单数</th>
+            <th class="th-diff-src" style="width:7.5rem">来源</th>
+            <th style="width:4.5rem">项次</th>
+            <th>运单号</th>
           </tr>
         </thead>
         <tbody id="diffAnalysisTbody"></tbody>
@@ -795,6 +945,21 @@ function renderDiffAnalysis() {
   const runQuery = async () => {
     const routeDate = document.getElementById("diffAnalysisDate").value;
     const datasetType = document.getElementById("diffAnalysisDataset").value;
+    const showSourceCol = datasetType === "all";
+    const colSpan = showSourceCol ? 5 : 4;
+    const theadRow = document.getElementById("diffAnalysisTheadRow");
+    if (theadRow) {
+      theadRow.innerHTML = showSourceCol
+        ? `<th>门店名称</th>
+            <th style="width:6rem">运单数</th>
+            <th class="th-diff-src" style="width:7.5rem" title="系统建议 或 手工排线">来源</th>
+            <th style="width:4.5rem">项次</th>
+            <th>运单号</th>`
+        : `<th>门店名称</th>
+            <th style="width:6rem">运单数</th>
+            <th style="width:4.5rem">项次</th>
+            <th>运单号</th>`;
+    }
     if (!routeDate) {
       tbody.innerHTML = "";
       emptyEl.removeAttribute("hidden");
@@ -802,7 +967,7 @@ function renderDiffAnalysis() {
       return;
     }
     emptyEl.setAttribute("hidden", "");
-    tbody.innerHTML = `<tr><td colspan="3" class="empty-hint">加载中…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colSpan}" class="empty-hint">加载中…</td></tr>`;
     const q = new URLSearchParams({ route_date: routeDate, dataset_type: datasetType });
     try {
       const resp = await fetch(`${API_BASE}/diff-analysis/multi-vehicle-stores?${q}`);
@@ -819,7 +984,7 @@ function renderDiffAnalysis() {
             : Array.isArray(data.detail)
               ? data.detail.map((x) => x.msg || x).join(" ")
               : JSON.stringify(data.detail || data);
-        tbody.innerHTML = `<tr><td colspan="3" class="alert alert--error">${escapeHtml(
+        tbody.innerHTML = `<tr><td colspan="${colSpan}" class="alert alert--error">${escapeHtml(
           String(detail).slice(0, 2000) || "请求失败",
         )}</td></tr>`;
         return;
@@ -832,24 +997,30 @@ function renderDiffAnalysis() {
         return;
       }
       emptyEl.setAttribute("hidden", "");
-      tbody.innerHTML = items
-        .map((it) => {
-          const wbs = it.waybills || [];
-          const lis = wbs
-            .map(
-              (w) =>
-                `<li>项次 ${w.item_seq} · ${diffDatasetTypeTagSpan(w.dataset_type)}<code>${escapeHtml(String(w.waybill_no || ""))}</code></li>`,
-            )
-            .join("");
-          return `<tr>
-            <td>${escapeHtml(String(it.store_name || ""))}</td>
-            <td>${wbs.length}</td>
-            <td><ul class="diff-wb-list">${lis}</ul></td>
-          </tr>`;
-        })
-        .join("");
+      const rows = [];
+      for (const it of items) {
+        const wbs = it.waybills || [];
+        const n = wbs.length;
+        const rs = n > 0 ? String(n) : "0";
+        wbs.forEach((w, idx) => {
+          const storeCell =
+            idx === 0
+              ? `<td rowspan="${n}">${escapeHtml(String(it.store_name || ""))}</td><td rowspan="${n}">${rs}</td>`
+              : "";
+          const srcCell = showSourceCol
+            ? `<td>${escapeHtml(diffDatasetTypeLabel(w.dataset_type))}</td>`
+            : "";
+          rows.push(`<tr>
+            ${storeCell}
+            ${srcCell}
+            <td>${Number(w.item_seq) || ""}</td>
+            <td><code>${escapeHtml(String(w.waybill_no || ""))}</code></td>
+          </tr>`);
+        });
+      }
+      tbody.innerHTML = rows.join("");
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="3">${backendUnreachableHtml(e)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${colSpan}">${backendUnreachableHtml(e)}</td></tr>`;
     }
   };
   document.getElementById("diffAnalysisQuery").addEventListener("click", runQuery);
@@ -1057,23 +1228,23 @@ function renderResult() {
     </div>
     <div id="overviewArea"></div>
     <div class="table-scroll">
-      <table class="data-table">
+      <table class="data-table data-table--compare-sort">
         <thead>
           <tr>
-            <th>地图</th>
-            <th>运单号</th>
-            <th>系统车型</th>
-            <th>手工车型</th>
-            <th>匹配状态</th>
-            <th>门店匹配率</th>
-            <th>相同门店</th>
-            <th>不同门店</th>
-            <th>匹配度</th>
-            <th>体积差异</th>
-            <th>线路一致</th>
-            <th>车型一致</th>
-            <th>里程差</th>
-            <th>时效差</th>
+            <th scope="col">地图</th>
+            ${compareSortableTh("运单号", "waybill")}
+            ${compareSortableTh("系统车型", "sys_vehicle_type")}
+            ${compareSortableTh("手工车型", "manual_vehicle_type")}
+            ${compareSortableTh("匹配状态", "match_status")}
+            ${compareSortableTh("门店匹配率", "store_match_rate")}
+            ${compareSortableTh("相同门店", "same_stores")}
+            ${compareSortableTh("不同门店", "diff_stores")}
+            ${compareSortableTh("匹配度", "match_score")}
+            ${compareSortableTh("体积差异", "volume_diff")}
+            ${compareSortableTh("线路一致", "line_consistent")}
+            ${compareSortableTh("车型一致", "vehicle_type_consistent")}
+            ${compareSortableTh("里程差", "est_distance_diff")}
+            ${compareSortableTh("时效差", "est_duration_diff")}
           </tr>
         </thead>
         <tbody id="resultTable"></tbody>
@@ -1093,6 +1264,9 @@ function renderResult() {
     if (!routeDate) {
       statusWrap.innerHTML = "";
       overviewArea.innerHTML = `<div class="alert alert--muted">请选择排线日期。</div>`;
+      _compareResultRows = [];
+      _compareResultSort.key = null;
+      _compareResultSort.dir = "asc";
       tbody.innerHTML = "";
       emptyEl.style.display = "block";
       return;
@@ -1116,6 +1290,8 @@ function renderResult() {
         statusWrap.innerHTML = `<div class="alert alert--error"><strong>比对失败</strong>（HTTP ${runResp.status}）<pre>${escapeHtml(
           JSON.stringify(runData, null, 2).slice(0, 1200)
         )}</pre></div>`;
+        _compareResultRows = [];
+        _compareResultSort.key = null;
         emptyEl.style.display = "block";
         return;
       }
@@ -1140,35 +1316,37 @@ function renderResult() {
         `${API_BASE}/compare/results?route_date=${routeDate}&match_status=${encodeURIComponent(status)}${whRowsQ}`,
       );
       const rows = await resultResp.json();
-      tbody.innerHTML = rows
-        .map(
-          (r) =>
-            `<tr>
-            <td><button type="button" class="btn btn--map map-btn" data-crid="${r.id}">地图</button></td>
-            ${formatCompareWaybillCell(r.sys_waybill_no, r.manual_waybill_no)}
-            <td>${r.sys_vehicle_type ?? "—"}</td>
-            <td>${r.manual_vehicle_type ?? "—"}</td>
-            <td>${matchStatusBadge(r.match_status)}</td>
-            <td>${r.store_match_rate ?? "—"}</td>
-            <td class="cell-stores">${r.same_stores != null && r.same_stores !== "" ? escapeHtml(String(r.same_stores)) : "—"}</td>
-            ${formatDiffStoresCell(r.diff_stores_system, r.diff_stores_manual)}
-            <td>${r.match_score ?? "—"}</td>
-            <td>${r.volume_diff ?? "—"}</td>
-            <td>${r.line_consistent ? "是" : "否"}</td>
-            <td>${r.vehicle_type_consistent == null ? "—" : r.vehicle_type_consistent ? "是" : "否"}</td>
-            <td>${r.est_distance_diff ?? "—"}</td>
-            <td>${r.est_duration_diff ?? "—"}</td>
-          </tr>`
-        )
-        .join("");
-      emptyEl.style.display = rows.length ? "none" : "block";
-      if (!rows.length) emptyEl.textContent = "该条件下没有线路差异记录。";
+      _compareResultRows = Array.isArray(rows) ? rows : [];
+      _compareResultSort.key = null;
+      _compareResultSort.dir = "asc";
+      refreshCompareResultTable();
+      emptyEl.style.display = _compareResultRows.length ? "none" : "block";
+      if (!_compareResultRows.length) emptyEl.textContent = "该条件下没有线路差异记录。";
     } catch (err) {
       statusWrap.innerHTML = backendUnreachableHtml(err);
       overviewArea.innerHTML = "";
+      _compareResultRows = [];
+      _compareResultSort.key = null;
       tbody.innerHTML = "";
     }
   };
+  (function bindCompareSort() {
+    const st = document.querySelector(".data-table--compare-sort");
+    if (!st) return;
+    st.addEventListener("click", (e) => {
+      const th = e.target && e.target.closest && e.target.closest("th[data-cmp-sort]");
+      if (!th) return;
+      e.preventDefault();
+      onCompareResultSortThClick(th.getAttribute("data-cmp-sort"));
+    });
+    st.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const th = e.target && e.target.closest && e.target.closest("th[data-cmp-sort]");
+      if (!th) return;
+      e.preventDefault();
+      onCompareResultSortThClick(th.getAttribute("data-cmp-sort"));
+    });
+  })();
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("lineDiffDate").value;
     if (!routeDate) return;
@@ -1193,6 +1371,48 @@ function formatMarkerLngLatSuffix(m) {
   const y = Number(lat);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
   return ` <span class="route-map-ll" title="经度,纬度（与接口/库中数值一致，未做舍入）">${lng}, ${lat}</span>`;
+}
+
+/** 球面大圆距离（km），用于路线地图上站点间参考。 */
+function haversineKm(lng1, lat1, lng2, lat2) {
+  const R = 6371;
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLng = rad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const aa = Math.min(1, Math.max(0, a));
+  const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(Math.max(1e-12, 1 - aa)));
+  return R * c;
+}
+
+function buildRouteMapMarkerLabelHtml(m) {
+  const n = (m.seq ?? 0) + 1;
+  const kind = m.kind === "warehouse" ? "仓库" : "门店";
+  const nm = escapeHtml(String(m.name || "").trim() || "—");
+  return `<div class="route-map-pin-label"><span class="route-map-pin-label__row"><span class="route-map-pin-label__seq">${n}</span><span class="route-map-pin-label__kind">${kind}</span></span><div class="route-map-pin-label__nm">${nm}</div></div>`;
+}
+
+function formatRouteLegDistancesHtml(sideTitle, markers) {
+  if (!markers || markers.length < 2) {
+    return `<p class="route-map-leg-panel__empty">该侧站点不足，无法分段计算距离。</p>`;
+  }
+  const sorted = [...markers].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  const whNm = (x) => escapeHtml(String(x.name || "").trim() || "—");
+  const rows = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1];
+    const b = sorted[i];
+    const km = haversineKm(Number(a.lng), Number(a.lat), Number(b.lng), Number(b.lat));
+    const kmStr = km < 10 ? km.toFixed(2) : km.toFixed(1);
+    const legLabel =
+      i === 1
+        ? `<span class="route-map-leg-tag">仓店距离</span> ${whNm(a)} → ${whNm(b)}`
+        : `<span class="route-map-leg-tag">店间距离</span> ${whNm(a)} → ${whNm(b)}`;
+    rows.push(`<li>${legLabel}<span class="route-map-leg-km">${kmStr} km</span></li>`);
+  }
+  return `<div class="route-map-leg-panel__head">${escapeHtml(sideTitle)}</div><ul class="route-map-leg-ul">${rows.join("")}</ul><p class="route-map-leg-note">以上为站点间<strong>球面直线距离</strong>，仅供参考；实际路网以轨迹为准。</p>`;
 }
 
 /**
@@ -1237,7 +1457,7 @@ function renderRouteMap() {
   const rid = routeMapIdFromHash();
   app.innerHTML = `
     <div class="page-head">
-      <p>蓝色为系统建议路线，红色虚线为手工路线；图例与关键点序号见地图。</p>
+      <p>蓝色为系统建议路线，红色虚线为手工路线；站点旁常显仓库/门店名称。点击路线可查看该侧仓店距离与各段店间距离。</p>
     </div>
     <div class="map-layout">
       <p class="alert alert--muted" style="margin-bottom:16px;font-size:0.8rem">
@@ -1246,6 +1466,9 @@ function renderRouteMap() {
       <div id="routeMapMeta" class="map-meta"></div>
       <div id="routeMapStops" class="route-map-stops-wrap"></div>
       <div id="mapContainer"></div>
+      <div id="routeMapLegPanel" class="route-map-leg-panel" role="region" aria-label="路线分段距离">
+        <p class="route-map-leg-panel__hint">点击地图上的<strong>蓝色</strong>或<strong>红色虚线</strong>路线，查看该侧<strong>仓店距离</strong>与<strong>店间距离</strong>。</p>
+      </div>
       <div id="routeMapErr"></div>
       <a class="back-link" href="#result">← 返回线路差异结果</a>
     </div>
@@ -1337,6 +1560,14 @@ function renderRouteMap() {
 
     const map = new AMap.Map("mapContainer", { zoom: 11, viewMode: "2D" });
     const overlays = [];
+    const legPanelEl = document.getElementById("routeMapLegPanel");
+
+    const bindPolylineLegClick = (polyline, sideTitle, markers) => {
+      if (!polyline || !legPanelEl) return;
+      polyline.on("click", () => {
+        legPanelEl.innerHTML = formatRouteLegDistancesHtml(sideTitle, markers);
+      });
+    };
 
     if (data.system?.available && data.system.path?.length) {
       const pl = new AMap.Polyline({
@@ -1346,9 +1577,12 @@ function renderRouteMap() {
         strokeOpacity: 0.85,
         lineJoin: "round",
         zIndex: 50,
+        cursor: "pointer",
+        bubble: true,
       });
       map.add(pl);
       overlays.push(pl);
+      bindPolylineLegClick(pl, "系统建议路线", data.system.markers || []);
     }
 
     if (data.manual?.available && data.manual.path?.length) {
@@ -1360,9 +1594,12 @@ function renderRouteMap() {
         strokeStyle: "dashed",
         lineJoin: "round",
         zIndex: 60,
+        cursor: "pointer",
+        bubble: true,
       });
       map.add(pl2);
       overlays.push(pl2);
+      bindPolylineLegClick(pl2, "手工路线", data.manual.markers || []);
     }
 
     const labelSrc =
@@ -1371,8 +1608,12 @@ function renderRouteMap() {
       const n = (m.seq ?? 0) + 1;
       new AMap.Marker({
         position: [m.lng, m.lat],
-        title: `${n} ${m.name}`,
-        label: { content: String(n), direction: "top" },
+        title: `${n} ${m.name || ""}`,
+        label: {
+          content: buildRouteMapMarkerLabelHtml(m),
+          direction: "top",
+          offset: [0, 4],
+        },
         map,
       });
     });
@@ -1393,20 +1634,171 @@ const CP = {
   modalKey: null,
 };
 
-/** 与后端 `CustomerProfile` 可编辑字段一致（不含 id/created_at/updated_at） */
+/** 列表列：与产品「客户主数据」表头一致；`w` 为默认列宽，可被拖动与「重置列宽」覆盖。 */
+const CP_LIST_COLUMNS = [
+  { k: "customer_code", label: "客户编码", w: "6.5rem" },
+  { k: "customer_name", label: "客户名称", w: "9rem" },
+  { k: "customer_short_name", label: "客户简称", w: "5.5rem" },
+  { k: "customer_category", label: "客户分类", fallback: "customer_type", w: "5.5rem" },
+  { k: "sales_org", label: "销售组织", w: "7.5rem" },
+  { k: "province", label: "省", w: "4.5rem" },
+  { k: "city", label: "市", w: "5rem" },
+  { k: "district", label: "区", w: "5rem" },
+  { k: "addr_street", label: "街道", fallback: "delivery_street", w: "6rem" },
+  { k: "address", label: "详细地址", fallback: "delivery_address", w: "16rem" },
+  { k: "delivery_coordinate", label: "收货坐标", w: "12rem" },
+  { k: "contact_name", label: "联系人", w: "5.5rem" },
+  { k: "contact_phone", label: "联系电话", w: "7.5rem" },
+  { k: "settlement_unit", label: "结算单位", w: "7rem" },
+  { k: "status", label: "状态", fallback: "business_status", w: "5rem" },
+  { k: "created_by", label: "创建人", w: "5rem" },
+  { k: "created_at", label: "创建时间", w: "9.5rem" },
+  { k: "updated_by", label: "修改人", w: "5rem" },
+  { k: "updated_at", label: "修改时间", w: "9.5rem" },
+  { k: "remark", label: "备注", w: "11rem" },
+];
+
+const CP_LIST_COL_WIDTHS_KEY = "smart_route_cp_list_col_widths";
+
+let _cpWidthOverrides = null;
+function cpLoadWidthOverrides() {
+  if (_cpWidthOverrides !== null) return;
+  try {
+    const raw = localStorage.getItem(CP_LIST_COL_WIDTHS_KEY);
+    _cpWidthOverrides = raw && raw.trim() ? JSON.parse(raw) : {};
+  } catch {
+    _cpWidthOverrides = {};
+  }
+}
+function cpSaveWidthOverrides() {
+  if (_cpWidthOverrides == null) return;
+  try {
+    localStorage.setItem(CP_LIST_COL_WIDTHS_KEY, JSON.stringify(_cpWidthOverrides));
+  } catch {
+    /* ignore */
+  }
+}
+function cpColWidthFor(k) {
+  cpLoadWidthOverrides();
+  const o = _cpWidthOverrides;
+  if (o && o[k] != null && String(o[k]).trim() !== "") return String(o[k]).trim();
+  const c = CP_LIST_COLUMNS.find((x) => x.k === k);
+  return (c && c.w) || "7rem";
+}
+function buildCpColgroupHtml() {
+  cpLoadWidthOverrides();
+  return `<colgroup>
+    ${CP_LIST_COLUMNS.map((c) => {
+      const w = cpColWidthFor(c.k);
+      return `<col class="cp-col" data-cp-colk="${c.k}" style="width:${w};min-width:${w}"/>`;
+    }).join("")}
+    <col class="cp-col cp-col--actions" data-cp-colk="_actions" style="width:5.5rem;min-width:5.5rem"/>
+  </colgroup>`;
+}
+function cpResetColumnWidths() {
+  localStorage.removeItem(CP_LIST_COL_WIDTHS_KEY);
+  _cpWidthOverrides = null;
+  cpLoadWidthOverrides();
+  for (const c of CP_LIST_COLUMNS) {
+    const el = document.querySelector(`#cp-table col[data-cp-colk="${c.k}"]`);
+    if (!el) continue;
+    const w = c.w || "7rem";
+    el.style.width = w;
+    el.style.minWidth = w;
+  }
+}
+
+let _cpColDrag = null;
+function cpOnResizeMove(e) {
+  if (!_cpColDrag) return;
+  const d = e.clientX - _cpColDrag.startX;
+  const w = Math.max(48, _cpColDrag.startW + d);
+  _cpColDrag.col.style.width = `${w}px`;
+  _cpColDrag.col.style.minWidth = `${w}px`;
+}
+function cpOnResizeEnd() {
+  document.removeEventListener("mousemove", cpOnResizeMove);
+  if (_cpColDrag) {
+    const w = _cpColDrag.col.getBoundingClientRect().width;
+    if (!_cpWidthOverrides) _cpWidthOverrides = {};
+    _cpWidthOverrides[_cpColDrag.k] = `${Math.round(w)}px`;
+    cpSaveWidthOverrides();
+    _cpColDrag = null;
+  }
+}
+function cpOnResizeStart(e) {
+  const h = e.target && e.target.closest && e.target.closest(".cp-resize-h");
+  if (!h) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const k = h.getAttribute("data-cp-colk");
+  if (!k) return;
+  const col = document.querySelector(`#cp-table col[data-cp-colk="${k}"]`);
+  if (!col) return;
+  const startX = e.clientX;
+  const startW = col.getBoundingClientRect().width;
+  _cpColDrag = { k, col, startX, startW };
+  document.addEventListener("mousemove", cpOnResizeMove);
+  document.addEventListener("mouseup", cpOnResizeEnd, { once: true });
+}
+
+const CP_NCOL = CP_LIST_COLUMNS.length + 1;
+
+function cpListCellText(it, col) {
+  let raw = it[col.k];
+  if (col.fallback) {
+    if (raw == null || raw === "") {
+      if (col.fallback === "comment_legacy") {
+        raw = it.remark;
+      } else {
+        raw = it[col.fallback];
+      }
+    }
+  }
+  if (raw == null || raw === "") return "—";
+  const s = String(raw);
+  if (col.k === "created_at" || col.k === "updated_at") {
+    return s.replace("T", " ").slice(0, 19);
+  }
+  return s;
+}
+
+function cpListCellDisplay(it, col) {
+  const full = cpListCellText(it, col);
+  if (full === "—") return { html: "—", title: "" };
+  const maxCh =
+    col.k === "address" || col.k === "delivery_coordinate" || col.k === "remark" ? 48 : 36;
+  const t = full.length > maxCh ? full.slice(0, maxCh) + "…" : full;
+  return {
+    html: escapeHtml(t),
+    title: full.length > maxCh ? ` title="${escapeHtml(full)}"` : "",
+  };
+}
+
+/** 与后端 `CustomerProfile` 可编辑字段一致（主数据字段在前，扩展字段在后） */
 const CP_FIELDS = [
-  { k: "customer_code", label: "客户代码", t: "text", req: true },
+  { k: "customer_code", label: "客户编码", t: "text", req: true },
   { k: "customer_name", label: "客户名称", t: "text", req: true },
-  { k: "customer_type", label: "客户类型", t: "text" },
-  { k: "business_status", label: "营业状态", t: "text" },
+  { k: "customer_short_name", label: "客户简称", t: "text" },
+  { k: "customer_category", label: "客户分类", t: "text" },
+  { k: "sales_org", label: "销售组织", t: "text" },
   { k: "contact_name", label: "联系人", t: "text" },
   { k: "business_hours", label: "营业时间", t: "text" },
   { k: "contact_phone", label: "联系电话", t: "text" },
   { k: "province", label: "省", t: "text" },
   { k: "city", label: "市", t: "text" },
   { k: "district", label: "区", t: "text" },
+  { k: "addr_street", label: "街道", t: "text" },
   { k: "county", label: "县", t: "text" },
-  { k: "address", label: "地址", t: "area" },
+  { k: "address", label: "详细地址", t: "area" },
+  { k: "delivery_coordinate", label: "收货坐标", t: "text" },
+  { k: "settlement_unit", label: "结算单位", t: "text" },
+  { k: "status", label: "状态", t: "text" },
+  { k: "created_by", label: "创建人", t: "text" },
+  { k: "updated_by", label: "修改人", t: "text" },
+  { k: "remark", label: "备注", t: "area" },
+  { k: "customer_type", label: "客户类型(供应链列表)", t: "text" },
+  { k: "business_status", label: "营业状态", t: "text" },
   { k: "performance_sla", label: "履约时效", t: "text" },
   { k: "line_count", label: "线路数", t: "text" },
   { k: "route_line", label: "所属线路", t: "text" },
@@ -1425,9 +1817,7 @@ const CP_FIELDS = [
   { k: "min_order", label: "起送量", t: "text" },
   { k: "delivery_schedule", label: "配送排程", t: "text" },
   { k: "loop_mode", label: "循环模式", t: "text" },
-  { k: "remark", label: "客户备注", t: "area" },
   { k: "consignee", label: "收货人", t: "text" },
-  { k: "delivery_coordinate", label: "收货坐标", t: "text" },
   { k: "consignee_phone", label: "收货电话", t: "text" },
   { k: "delivery_address", label: "收货地址", t: "area" },
   { k: "delivery_province", label: "收货省", t: "text" },
@@ -1528,7 +1918,7 @@ async function cpLoadList() {
   const tbody = document.getElementById("cp-tbody");
   const totalEl = document.getElementById("cp-total");
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="7" class="empty-hint">加载中…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="${CP_NCOL}" class="empty-hint">加载中…</td></tr>`;
   const q = new URLSearchParams({
     skip: String(CP.skip),
     limit: String(CP.limit),
@@ -1538,38 +1928,29 @@ async function cpLoadList() {
     const r = await fetch(`${API_BASE}/customer-profiles?${q}`);
     const d = await r.json();
     if (!r.ok) {
-      tbody.innerHTML = `<tr><td colspan="7" class="alert alert--error">加载失败</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${CP_NCOL}" class="alert alert--error">加载失败</td></tr>`;
       return;
     }
     if (totalEl) totalEl.textContent = `共 ${d.total} 条`;
     const items = d.items || [];
     if (items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-hint">暂无数据</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${CP_NCOL}" class="empty-hint">暂无数据</td></tr>`;
       return;
     }
     tbody.innerHTML = items
-      .map(
-        (it) => {
-          const addr = (it.delivery_address || it.address || "").replace(/\s+/g, " ");
-          const short =
-            addr.length > 32 ? `${escapeHtml(addr.slice(0, 32))}…` : escapeHtml(addr);
-          return `<tr>
-      <td>${it.id}</td>
-      <td><code>${escapeHtml(String(it.customer_code || ""))}</code></td>
-      <td>${escapeHtml(String(it.customer_name || ""))}</td>
-      <td>${escapeHtml(String(it.city || "—"))}</td>
-      <td>${escapeHtml(String(it.contact_phone || "—"))}</td>
-      <td title="${escapeHtml(addr)}">${short || "—"}</td>
-      <td class="table-actions">
+      .map((it) => {
+        const cells = CP_LIST_COLUMNS.map((col) => {
+          const { html, title } = cpListCellDisplay(it, col);
+          return `<td class="cp-list-cell"${title}>${html}</td>`;
+        }).join("");
+        return `<tr>${cells}<td class="table-actions">
         <button type="button" class="btn btn--secondary btn--sm" data-cp="edit" data-id="${it.id}">编辑</button>
         <button type="button" class="btn btn--secondary btn--sm" data-cp="del" data-id="${it.id}" style="color:var(--danger)">删除</button>
-      </td>
-    </tr>`;
-        },
-      )
+      </td></tr>`;
+      })
       .join("");
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="7">${backendUnreachableHtml(e)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${CP_NCOL}">${backendUnreachableHtml(e)}</td></tr>`;
   }
 }
 
@@ -1577,12 +1958,12 @@ function renderCustomerProfiles() {
   CP.editId = null;
   app.innerHTML = `
     <div class="page-head page-head--compact">
-      <p><small class="empty-hint">管理表 <code>customer_profile</code>。导入需列「客户代码」「客户名称」「收货坐标」等，与导出的 <strong>客户列表</strong> 模板一致。页面新增时可将「写入来源」填为 <code>页面录入</code>。</small></p>
+      <p><small class="empty-hint">列表字段与主数据表头一致（客户编码、名称、简称、分类、销售组织、地址、收货坐标、结算与状态、创建/修改信息、备注等）。导入 <strong>客户列表</strong> Excel 仍支持原列；页面新增可将「写入来源」填为 <code>页面录入</code>。</small></p>
     </div>
     <div class="toolbar" style="flex-wrap:wrap">
       <div class="field" style="min-width:200px">
         <span class="field-label">搜索</span>
-        <input type="search" id="cp-q" placeholder="代码 / 名称" value="${escapeHtml(CP.q)}" />
+        <input type="search" id="cp-q" placeholder="编码 / 名称 / 简称 / 销售组织" value="${escapeHtml(CP.q)}" />
       </div>
       <button type="button" class="btn btn--secondary" id="cp-search">查询</button>
       <button type="button" class="btn btn--secondary" id="cp-refresh">刷新</button>
@@ -1594,19 +1975,23 @@ function renderCustomerProfiles() {
       </div>
       <button type="button" class="btn btn--primary" id="cp-import">上传导入</button>
       <span id="cp-total" class="field-label" style="align-self:center"></span>
+      <button type="button" class="btn btn--secondary" id="cp-width-reset" title="清除本机保存的列宽，恢复默认">重置列宽</button>
     </div>
     <div id="cp-msg" style="margin-top:8px"></div>
-    <div class="table-scroll">
-      <table class="data-table" id="cp-table">
+    <p class="empty-hint" style="margin:0 0 8px;font-size:0.8rem">列宽可拖动表头右缘调整，刷新后仍保留；地址、坐标、备注等列已加默认可视宽度。</p>
+    <div class="table-scroll cp-table-scroll">
+      <table class="data-table data-table--cp" id="cp-table">
+        ${buildCpColgroupHtml()}
         <thead>
           <tr>
-            <th>ID</th>
-            <th>客户代码</th>
-            <th>客户名称</th>
-            <th>市</th>
-            <th>联系电话</th>
-            <th>地址摘要</th>
-            <th>操作</th>
+            ${CP_LIST_COLUMNS.map(
+              (c) =>
+                `<th class="cp-th" scope="col">
+  <span class="cp-th__text">${escapeHtml(c.label)}</span>
+  <span class="cp-resize-h" data-cp-colk="${c.k}" title="拖动调整列宽" role="separator" aria-grabbed="false"></span>
+</th>`,
+            ).join("")}
+            <th class="cp-th cp-th--action" scope="col"><span class="cp-th__text">操作</span></th>
           </tr>
         </thead>
         <tbody id="cp-tbody"></tbody>
@@ -1638,6 +2023,10 @@ function renderCustomerProfiles() {
   document.getElementById("cp-refresh")?.addEventListener("click", () => {
     void cpLoadList();
   });
+  document.getElementById("cp-width-reset")?.addEventListener("click", () => {
+    cpResetColumnWidths();
+  });
+  document.getElementById("cp-table")?.addEventListener("mousedown", cpOnResizeStart);
   document.getElementById("cp-new")?.addEventListener("click", () => {
     CP.editId = null;
     const t = document.getElementById("cp-modal-title");

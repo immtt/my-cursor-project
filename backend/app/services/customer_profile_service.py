@@ -69,6 +69,14 @@ def customer_profile_to_item(row: CustomerProfile) -> Dict[str, Any]:
         "id": row.id,
         "customer_code": row.customer_code,
         "customer_name": row.customer_name,
+        "customer_short_name": row.customer_short_name,
+        "customer_category": row.customer_category,
+        "sales_org": row.sales_org,
+        "addr_street": row.addr_street,
+        "settlement_unit": row.settlement_unit,
+        "status": row.status,
+        "created_by": row.created_by,
+        "updated_by": row.updated_by,
         "customer_type": row.customer_type,
         "business_status": row.business_status,
         "contact_name": row.contact_name,
@@ -114,6 +122,14 @@ def customer_profile_to_item(row: CustomerProfile) -> Dict[str, Any]:
 
 def _apply_payload(row: CustomerProfile, data: Dict[str, Any], *, for_create: bool) -> None:
     str_fields = (
+        "customer_short_name",
+        "customer_category",
+        "sales_org",
+        "addr_street",
+        "settlement_unit",
+        "status",
+        "created_by",
+        "updated_by",
         "customer_type",
         "business_status",
         "contact_name",
@@ -191,6 +207,8 @@ def list_customer_profiles(
             or_(
                 CustomerProfile.customer_code.like(like),
                 CustomerProfile.customer_name.like(like),
+                CustomerProfile.customer_short_name.like(like),
+                CustomerProfile.sales_org.like(like),
             )
         )
     total = q.count()
@@ -222,12 +240,12 @@ def get_by_customer_code(db: Session, customer_code: str) -> Optional[CustomerPr
 def create_customer_profile(db: Session, data: Dict[str, Any]) -> CustomerProfile:
     code = (data.get("customer_code") or "").strip()
     if not code:
-        raise ValueError("客户代码不能为空")
+        raise ValueError("客户编码不能为空")
     name = (data.get("customer_name") or "").strip()
     if not name:
         name = code
     if get_by_customer_code(db, code):
-        raise ValueError("客户代码已存在")
+        raise ValueError("客户编码已存在")
     row = CustomerProfile(customer_code=code, customer_name=name)
     db.add(row)
     _apply_payload(row, data, for_create=True)
@@ -244,10 +262,10 @@ def update_customer_profile(db: Session, row_id: int, data: Dict[str, Any]) -> O
     if "customer_code" in data:
         new_code = (data.get("customer_code") or "").strip()
         if not new_code:
-            raise ValueError("客户代码不能为空")
+            raise ValueError("客户编码不能为空")
         other = get_by_customer_code(db, new_code)
         if other and other.id != row_id:
-            raise ValueError("客户代码已存在")
+            raise ValueError("客户编码已存在")
     _apply_payload(row, data, for_create=False)
     if (row.customer_name or "").strip() == "":
         row.customer_name = (row.customer_code or "").strip() or "—"

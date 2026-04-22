@@ -103,7 +103,14 @@
 
 ### 3) 获取结果概览
 
-- `GET /api/compare/overview?route_date=2026-04-20`
+- `GET /api/compare/overview?route_date=2026-04-20`（可选 `warehouse_name=始发仓库` 精确过滤）
+
+响应除 `total` / 各状态计数 / `avg_*` 外，还包含**汇总差**（在筛选结果集上对 `compare_result` 的差值**求和**；无差值行不参与该项求和，全无时为 0）与**总车次差**（当日同筛选下有效系统运单数 − 有效手工运单数）：
+
+- `total_trip_diff`：总车次差（单数）
+- `total_volume_diff`：总体积差（m³，系统−手工 之和）
+- `total_distance_diff`：总公里差（km 之和）
+- `total_duration_diff`：总时长差（分钟之和，整数）
 
 ### 4) 获取结果明细
 

@@ -204,10 +204,15 @@ def test_overview_and_results_filter_by_warehouse(db_session):
 
     o_all = overview(db_session, rd)
     assert o_all["total"] == 2
+    assert o_all["total_trip_diff"] == 0
+    assert "total_volume_diff" in o_all
+    assert "total_distance_diff" in o_all
+    assert "total_duration_diff" in o_all
     assert set(o_all["warehouse_options"]) == {"华东仓", "华北仓"}
 
     o_east = overview(db_session, rd, warehouse_name="华东仓")
     assert o_east["total"] == 1
+    assert o_east["total_trip_diff"] == 0
 
     rows_east = fetch_results(db_session, rd, warehouse_name="华东仓")
     assert len(rows_east) == 1

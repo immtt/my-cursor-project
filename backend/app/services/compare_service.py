@@ -164,6 +164,23 @@ def compare_row_matches_warehouse(
     return s == wh or m == wh
 
 
+def _count_active_routes(
+    db: Session, route_date, warehouse_name: Optional[str]
+) -> Tuple[int, int]:
+    """当日有效运单行数：系统、手工。可选按始发仓库精确匹配。"""
+    wh = (warehouse_name or "").strip()
+    q_s = db.query(SysSuggest).filter(
+        SysSuggest.route_date == route_date, SysSuggest.is_active == 1
+    )
+    q_m = db.query(ManualRoute).filter(
+        ManualRoute.route_date == route_date, ManualRoute.is_active == 1
+    )
+    if wh:
+        q_s = q_s.filter(SysSuggest.warehouse_name == wh)
+        q_m = q_m.filter(ManualRoute.warehouse_name == wh)
+    return q_s.count(), q_m.count()
+
+
 def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
     wh = (warehouse_name or "").strip()
     all_rows = db.query(CompareResult).filter(CompareResult.route_date == route_date).all()
@@ -177,10 +194,15 @@ def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
     none_count = sum(1 for r in rows if r.match_status == "none")
     vols = [r.volume_diff for r in rows if r.volume_diff is not None]
     avg_volume = round(sum(vols) / len(vols), 2) if vols else 0.0
+    total_volume = round(sum(vols), 2) if vols else 0.0
     dists = [r.est_distance_diff for r in rows if r.est_distance_diff is not None]
     avg_dist = round(sum(dists) / len(dists), 2) if dists else 0.0
-    durs = [float(r.est_duration_diff) for r in rows if r.est_duration_diff is not None]
-    avg_dur = round(sum(durs) / len(durs), 2) if durs else 0.0
+    total_distance = round(sum(dists), 2) if dists else 0.0
+    durs = [int(r.est_duration_diff) for r in rows if r.est_duration_diff is not None]
+    avg_dur = round(float(sum(durs)) / len(durs), 2) if durs else 0.0
+    total_duration = int(sum(durs)) if durs else 0
+    n_sys, n_man = _count_active_routes(db, route_date, wh if wh else None)
+    total_trip_diff = n_sys - n_man
     opts = warehouse_options_for_route_date(db, route_date)
     return {
         "route_date": route_date,
@@ -188,6 +210,10 @@ def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
         "full_count": full_count,
         "partial_count": partial_count,
         "none_count": none_count,
+        "total_trip_diff": total_trip_diff,
+        "total_volume_diff": total_volume,
+        "total_distance_diff": total_distance,
+        "total_duration_diff": total_duration,
         "avg_volume_diff": avg_volume,
         "avg_distance_diff": avg_dist,
         "avg_duration_diff": avg_dur,

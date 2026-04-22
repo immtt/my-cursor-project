@@ -6,6 +6,9 @@ from app.db.session import Base
 
 class SysSuggest(Base):
     __tablename__ = "sys_suggest"
+    __table_args__ = (
+        UniqueConstraint("route_date", "waybill_no", name="uq_sys_suggest_route_date_waybill"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, comment="主键")
     route_date = Column(Date, index=True, nullable=False, comment="排线日期")
@@ -28,6 +31,9 @@ class SysSuggest(Base):
 
 class ManualRoute(Base):
     __tablename__ = "manual_route"
+    __table_args__ = (
+        UniqueConstraint("route_date", "waybill_no", name="uq_manual_route_route_date_waybill"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, comment="主键")
     route_date = Column(Date, index=True, nullable=False, comment="排线日期")
@@ -161,6 +167,14 @@ class CustomerProfile(Base):
     id = Column(Integer, primary_key=True, index=True, comment="主键")
     customer_code = Column(String(64), unique=True, nullable=False, index=True, comment="客户代码")
     customer_name = Column(String(300), nullable=False, index=True, comment="客户名称")
+    customer_short_name = Column(String(200), nullable=True, comment="客户简称")
+    customer_category = Column(String(200), nullable=True, comment="客户分类")
+    sales_org = Column(String(200), nullable=True, comment="销售组织")
+    addr_street = Column(String(200), nullable=True, comment="街道(主数据地址)")
+    settlement_unit = Column(String(200), nullable=True, comment="结算单位")
+    status = Column(String(100), nullable=True, comment="状态")
+    created_by = Column(String(64), nullable=True, comment="创建人")
+    updated_by = Column(String(64), nullable=True, comment="修改人")
     customer_type = Column(String(200), nullable=True, comment="客户类型")
     business_status = Column(String(200), nullable=True, comment="营业状态")
     contact_name = Column(String(200), nullable=True, comment="联系人")

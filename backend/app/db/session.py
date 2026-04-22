@@ -31,6 +31,14 @@ def ensure_sqlite_schema() -> None:
         ("manual_route", "vehicle_type", "VARCHAR(100) NOT NULL DEFAULT ''"),
         ("sys_suggest", "vehicle_type", "VARCHAR(100) NOT NULL DEFAULT ''"),
         ("manual_route", "delivery_store_order", "TEXT NULL"),
+        ("customer_profile", "customer_short_name", "VARCHAR(200) NULL"),
+        ("customer_profile", "customer_category", "VARCHAR(200) NULL"),
+        ("customer_profile", "sales_org", "VARCHAR(200) NULL"),
+        ("customer_profile", "addr_street", "VARCHAR(200) NULL"),
+        ("customer_profile", "settlement_unit", "VARCHAR(200) NULL"),
+        ("customer_profile", "status", "VARCHAR(100) NULL"),
+        ("customer_profile", "created_by", "VARCHAR(64) NULL"),
+        ("customer_profile", "updated_by", "VARCHAR(64) NULL"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in alters:

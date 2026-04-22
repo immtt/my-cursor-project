@@ -59,6 +59,14 @@ class StorePairDistanceUpdate(BaseModel):
 
 
 class _CustomerProfileOptionalFields(BaseModel):
+    customer_short_name: Optional[str] = None
+    customer_category: Optional[str] = None
+    sales_org: Optional[str] = None
+    addr_street: Optional[str] = None
+    settlement_unit: Optional[str] = None
+    status: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
     customer_type: Optional[str] = None
     business_status: Optional[str] = None
     contact_name: Optional[str] = None

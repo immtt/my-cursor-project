@@ -17,6 +17,10 @@ class CompareOverview(BaseModel):
     full_count: int
     partial_count: int
     none_count: int
+    total_trip_diff: int
+    total_volume_diff: float
+    total_distance_diff: float
+    total_duration_diff: int
     avg_volume_diff: Optional[float]
     avg_distance_diff: Optional[float]
     avg_duration_diff: Optional[float]
