@@ -16,11 +16,13 @@ def fetch_results(db: Session, route_date, match_status: str | None = None):
         manual_row = db.query(ManualRoute).filter(ManualRoute.id == row.manual_id).first()
         output.append(
             {
+                "id": row.id,
                 "sys_waybill_no": sys_row.waybill_no if sys_row else None,
                 "manual_waybill_no": manual_row.waybill_no if manual_row else None,
                 "match_status": row.match_status,
                 "store_match_rate": row.store_match_rate,
-                "volume_diff_rate": row.volume_diff_rate,
+                "match_score": row.match_score,
+                "volume_diff": row.volume_diff,
                 "line_consistent": bool(row.line_consistent),
                 "est_distance_diff": row.est_distance_diff,
                 "est_duration_diff": row.est_duration_diff,
@@ -35,7 +37,8 @@ def export_results_csv(file_path: str, rows: list[dict]):
         "manual_waybill_no",
         "match_status",
         "store_match_rate",
-        "volume_diff_rate",
+        "match_score",
+        "volume_diff",
         "line_consistent",
         "est_distance_diff",
         "est_duration_diff",

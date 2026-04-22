@@ -21,11 +21,13 @@ class CompareOverview(BaseModel):
 
 
 class CompareDetail(BaseModel):
+    id: int
     sys_waybill_no: str | None
     manual_waybill_no: str | None
     match_status: str
     store_match_rate: float
-    volume_diff_rate: float | None
+    match_score: float | None
+    volume_diff: float | None
     line_consistent: bool
     est_distance_diff: float | None
     est_duration_diff: int | None

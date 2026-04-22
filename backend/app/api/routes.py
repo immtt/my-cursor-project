@@ -1,23 +1,32 @@
 import os
 import tempfile
+import time
+import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.entities import CompareRunLog
 from app.schemas.requests import CompareRequest
 from app.services.compare_service import overview, run_compare
 from app.services.gaode_service import backfill_manual_routes
 from app.services.import_service import import_excel
 from app.services.result_service import export_results_csv, fetch_results
+from app.services.route_map_service import build_route_map_payload
 
 router = APIRouter()
 
 
 @router.post("/import/{dataset_type}")
-async def import_data(dataset_type: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_data(
+    dataset_type: str,
+    file: UploadFile = File(...),
+    x_operator: str | None = Header(default="system"),
+    db: Session = Depends(get_db),
+):
     if dataset_type not in {"system", "manual"}:
         raise HTTPException(status_code=400, detail="dataset_type must be system or manual")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
@@ -25,17 +34,30 @@ async def import_data(dataset_type: str, file: UploadFile = File(...), db: Sessi
         tmp.write(content)
         tmp_path = tmp.name
     try:
-        result = import_excel(db, dataset_type, tmp_path)
+        result = import_excel(db, dataset_type, tmp_path, operator=x_operator or "system")
     finally:
         os.remove(tmp_path)
     return result
 
 
 @router.post("/compare/run")
-def trigger_compare(req: CompareRequest, db: Session = Depends(get_db)):
+def trigger_compare(req: CompareRequest, x_operator: str | None = Header(default="system"), db: Session = Depends(get_db)):
+    start = time.time()
+    run_batch_id = uuid.uuid4().hex[:16]
     calc_result = backfill_manual_routes(db, req.route_date)
-    run_compare(db, req.route_date, req.match_threshold)
-    return {"message": "compare finished", "calc": calc_result}
+    result_count = run_compare(db, req.route_date, req.match_threshold)
+    duration_ms = int((time.time() - start) * 1000)
+    db.add(
+        CompareRunLog(
+            run_batch_id=run_batch_id,
+            route_date=req.route_date,
+            operator=x_operator or "system",
+            duration_ms=duration_ms,
+            result_count=result_count,
+        )
+    )
+    db.commit()
+    return {"message": "compare finished", "run_batch_id": run_batch_id, "calc": calc_result, "result_count": result_count}
 
 
 @router.get("/compare/overview")
@@ -46,6 +68,14 @@ def get_overview(route_date: date = Query(...), db: Session = Depends(get_db)):
 @router.get("/compare/results")
 def get_results(route_date: date = Query(...), match_status: str | None = Query(None), db: Session = Depends(get_db)):
     return fetch_results(db, route_date, match_status)
+
+
+@router.get("/compare/route-map/{compare_result_id}")
+def get_route_map(compare_result_id: int, db: Session = Depends(get_db)):
+    try:
+        return build_route_map_payload(db, compare_result_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
 
 
 @router.get("/compare/export")

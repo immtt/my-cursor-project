@@ -1,8 +1,32 @@
 const app = document.getElementById("app");
 const API_BASE = "http://127.0.0.1:8000/api";
 
+function routeMapIdFromHash() {
+  const h = window.location.hash || "";
+  if (!h.startsWith("#route-map")) return null;
+  const q = h.indexOf("?");
+  if (q === -1) return null;
+  const id = new URLSearchParams(h.slice(q + 1)).get("id");
+  return id ? parseInt(id, 10) : null;
+}
+
+function loadAmapScript(key) {
+  return new Promise((resolve, reject) => {
+    if (window.AMap) {
+      resolve();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}`;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("加载高德地图脚本失败"));
+    document.head.appendChild(s);
+  });
+}
+
 function route() {
   const hash = window.location.hash || "#import";
+  if (hash.startsWith("#route-map")) return renderRouteMap();
   if (hash === "#import") return renderImport();
   if (hash === "#data") return renderData();
   if (hash === "#compare") return renderCompare();
@@ -13,6 +37,7 @@ function route() {
 function renderImport() {
   app.innerHTML = `
     <h2>数据导入</h2>
+    <p>说明：同一排线日期 + 同一数据类型会执行覆盖导入（旧批次失效）。</p>
     <select id="datasetType">
       <option value="system">系统建议数据</option>
       <option value="manual">手动排线数据</option>
@@ -52,6 +77,9 @@ function renderCompare() {
       body: JSON.stringify({ route_date: routeDate, match_threshold: 0.5 }),
     });
     const data = await resp.json();
+    if (data.calc?.failures?.length) {
+      data.failed_stores = data.calc.failures;
+    }
     document.getElementById("compareResp").textContent = JSON.stringify(data, null, 2);
   };
 }
@@ -72,8 +100,9 @@ function renderResult() {
     <table>
       <thead>
         <tr>
+          <th>地图</th>
           <th>系统运单号</th><th>手动运单号</th><th>匹配状态</th><th>门店匹配率</th>
-          <th>体积差异率</th><th>线路一致</th><th>公里数差异</th><th>时效差异</th>
+          <th>匹配度</th><th>体积差异</th><th>线路一致</th><th>公里数差异</th><th>时效差异</th>
         </tr>
       </thead>
       <tbody id="resultTable"></tbody>
@@ -89,8 +118,9 @@ function renderResult() {
     const rows = await resultResp.json();
     document.getElementById("resultTable").innerHTML = rows
       .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
+        (r) =>
+          `<tr><td><button type="button" class="map-btn" data-crid="${r.id}">地图</button></td><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
+      <td>${r.store_match_rate}</td><td>${r.match_score ?? ""}</td><td>${r.volume_diff ?? ""}</td><td>${r.line_consistent}</td>
       <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
       )
       .join("");
@@ -99,6 +129,121 @@ function renderResult() {
     const routeDate = document.getElementById("resultDate").value;
     window.open(`${API_BASE}/compare/export?route_date=${routeDate}`, "_blank");
   };
+  document.getElementById("resultTable").onclick = (ev) => {
+    const btn = ev.target.closest(".map-btn");
+    if (!btn) return;
+    const id = btn.getAttribute("data-crid");
+    if (id) window.location.hash = `#route-map?id=${id}`;
+  };
+}
+
+function renderRouteMap() {
+  const rid = routeMapIdFromHash();
+  app.innerHTML = `
+    <h2>路线地图</h2>
+    <p style="font-size:13px;color:#555">使用高德 Web 端 Key：在浏览器控制台执行
+      <code>localStorage.setItem('amap_web_key','你的Key')</code> 后刷新本页。</p>
+    <p id="routeMapMeta"></p>
+    <div id="mapContainer"></div>
+    <p id="routeMapErr" style="color:#c00;"></p>
+    <p><a href="#result">返回比对结果</a></p>
+  `;
+  const errEl = document.getElementById("routeMapErr");
+  const metaEl = document.getElementById("routeMapMeta");
+  if (!rid || Number.isNaN(rid)) {
+    errEl.textContent = "缺少比对行 id，请从结果列表点击「地图」进入。";
+    return;
+  }
+
+  (async () => {
+    let data;
+    try {
+      const resp = await fetch(`${API_BASE}/compare/route-map/${rid}`);
+      if (!resp.ok) {
+        errEl.textContent = resp.status === 404 ? "未找到该比对记录。" : `请求失败 ${resp.status}`;
+        return;
+      }
+      data = await resp.json();
+    } catch (e) {
+      errEl.textContent = "无法连接后端，请确认服务已启动。";
+      return;
+    }
+
+    metaEl.innerHTML = `<strong>${data.warehouse_name || ""}</strong> · 匹配 <code>${data.match_status}</code> ·
+      系统 <code>${data.sys_waybill_no ?? "—"}</code> · 手工 <code>${data.manual_waybill_no ?? "—"}</code>
+      <span style="margin-left:12px;color:#1677FF">■ 系统</span> <span style="color:#FF4D4F">■ 手工</span>`;
+
+    const key = localStorage.getItem("amap_web_key") || "";
+    if (!key) {
+      errEl.textContent = "未配置 amap_web_key，已仅在下方展示接口原始路径点数（可配置 Key 后显示地图）。";
+      const pre = document.createElement("pre");
+      pre.style.fontSize = "12px";
+      pre.textContent = JSON.stringify(
+        {
+          system_points: data.system?.path?.length ?? 0,
+          manual_points: data.manual?.path?.length ?? 0,
+        },
+        null,
+        2
+      );
+      app.insertBefore(pre, document.getElementById("mapContainer"));
+      return;
+    }
+
+    try {
+      await loadAmapScript(key);
+    } catch {
+      errEl.textContent = "高德脚本加载失败。";
+      return;
+    }
+
+    const map = new AMap.Map("mapContainer", { zoom: 11, viewMode: "2D" });
+    const overlays = [];
+
+    if (data.system?.available && data.system.path?.length) {
+      const pl = new AMap.Polyline({
+        path: data.system.path.map(([lng, lat]) => [lng, lat]),
+        strokeColor: data.style?.system_line_color || "#1677FF",
+        strokeWeight: 7,
+        strokeOpacity: 0.85,
+        lineJoin: "round",
+        zIndex: 50,
+      });
+      map.add(pl);
+      overlays.push(pl);
+    }
+
+    if (data.manual?.available && data.manual.path?.length) {
+      const pl2 = new AMap.Polyline({
+        path: data.manual.path.map(([lng, lat]) => [lng, lat]),
+        strokeColor: data.style?.manual_line_color || "#FF4D4F",
+        strokeWeight: 5,
+        strokeOpacity: 0.9,
+        strokeStyle: "dashed",
+        lineJoin: "round",
+        zIndex: 60,
+      });
+      map.add(pl2);
+      overlays.push(pl2);
+    }
+
+    const labelSrc =
+      data.system?.markers?.length > 0 ? data.system.markers : data.manual?.markers || [];
+    labelSrc.forEach((m) => {
+      new AMap.Marker({
+        position: [m.lng, m.lat],
+        title: `${m.seq} ${m.name}`,
+        label: { content: String(m.seq), direction: "top" },
+        map,
+      });
+    });
+
+    if (overlays.length) {
+      map.setFitView(overlays, false, [40, 40, 40, 40]);
+    } else {
+      errEl.textContent = "当前记录无可用轨迹数据（可能补算未完成或缺少门店）。";
+    }
+  })();
 }
 
 window.addEventListener("hashchange", route);

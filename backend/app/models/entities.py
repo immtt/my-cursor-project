@@ -17,6 +17,11 @@ class SysSuggest(Base):
     load_rate = Column(Float, nullable=False)
     est_distance = Column(Float, nullable=False)
     est_duration = Column(Integer, nullable=False)
+    route_polyline = Column(Text, nullable=True)
+    batch_id = Column(String(64), nullable=False, default="")
+    is_active = Column(Integer, nullable=False, default=1, index=True)
+    import_operator = Column(String(64), nullable=True)
+    imported_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -33,7 +38,12 @@ class ManualRoute(Base):
     load_rate = Column(Float, nullable=False)
     est_distance = Column(Float, nullable=True)
     est_duration = Column(Integer, nullable=True)
+    route_polyline = Column(Text, nullable=True)
     calc_status = Column(Integer, default=0, nullable=False)
+    batch_id = Column(String(64), nullable=False, default="")
+    is_active = Column(Integer, nullable=False, default=1, index=True)
+    import_operator = Column(String(64), nullable=True)
+    imported_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
@@ -58,8 +68,49 @@ class CompareResult(Base):
     manual_id = Column(Integer, ForeignKey("manual_route.id"), nullable=True)
     match_status = Column(String(20), nullable=False)
     store_match_rate = Column(Float, nullable=False)
-    volume_diff_rate = Column(Float, nullable=True)
+    match_score = Column(Float, nullable=False, default=0)
+    volume_diff = Column(Float, nullable=True)
     line_consistent = Column(Integer, default=0, nullable=False)
     est_distance_diff = Column(Float, nullable=True)
     est_duration_diff = Column(Integer, nullable=True)
+    run_batch_id = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ImportAuditLog(Base):
+    __tablename__ = "import_audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(String(64), nullable=False, index=True)
+    dataset_type = Column(String(16), nullable=False)
+    route_date = Column(Date, nullable=False, index=True)
+    operator = Column(String(64), nullable=True)
+    total_rows = Column(Integer, nullable=False)
+    success_rows = Column(Integer, nullable=False)
+    failed_rows = Column(Integer, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class CompareRunLog(Base):
+    __tablename__ = "compare_run_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_batch_id = Column(String(64), nullable=False, index=True)
+    route_date = Column(Date, nullable=False, index=True)
+    operator = Column(String(64), nullable=True)
+    duration_ms = Column(Integer, nullable=False)
+    result_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class GaodeCalcFailureLog(Base):
+    __tablename__ = "gaode_calc_failure_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    manual_id = Column(Integer, ForeignKey("manual_route.id"), nullable=False, index=True)
+    route_date = Column(Date, nullable=False, index=True)
+    failed_store = Column(String(200), nullable=False)
+    reason = Column(String(500), nullable=False)
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_retry_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
