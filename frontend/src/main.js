@@ -10,11 +10,14 @@ function routeMapIdFromHash() {
   return id ? parseInt(id, 10) : null;
 }
 
-function loadAmapScript(key) {
+function loadAmapScript(key, securityJsCode) {
   return new Promise((resolve, reject) => {
     if (window.AMap) {
       resolve();
       return;
+    }
+    if (securityJsCode) {
+      window._AMapSecurityConfig = { securityJsCode: securityJsCode };
     }
     const s = document.createElement("script");
     s.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}`;
@@ -141,8 +144,8 @@ function renderRouteMap() {
   const rid = routeMapIdFromHash();
   app.innerHTML = `
     <h2>路线地图</h2>
-    <p style="font-size:13px;color:#555">使用高德 Web 端 Key：在浏览器控制台执行
-      <code>localStorage.setItem('amap_web_key','你的Key')</code> 后刷新本页。</p>
+    <p style="font-size:13px;color:#555">默认读取 <code>frontend/amap-config.local.js</code>（见 <code>amap-config.example.js</code>）。
+      也可在控制台设置 <code>localStorage.amap_web_key</code> / <code>amap_security_js_code</code> 覆盖。</p>
     <p id="routeMapMeta"></p>
     <div id="mapContainer"></div>
     <p id="routeMapErr" style="color:#c00;"></p>
@@ -173,9 +176,17 @@ function renderRouteMap() {
       系统 <code>${data.sys_waybill_no ?? "—"}</code> · 手工 <code>${data.manual_waybill_no ?? "—"}</code>
       <span style="margin-left:12px;color:#1677FF">■ 系统</span> <span style="color:#FF4D4F">■ 手工</span>`;
 
-    const key = localStorage.getItem("amap_web_key") || "";
+    const key =
+      (typeof window.__AMAP_WEB_KEY__ === "string" && window.__AMAP_WEB_KEY__) ||
+      localStorage.getItem("amap_web_key") ||
+      "";
+    const securityJsCode =
+      (typeof window.__AMAP_SECURITY_JS_CODE__ === "string" && window.__AMAP_SECURITY_JS_CODE__) ||
+      localStorage.getItem("amap_security_js_code") ||
+      "";
     if (!key) {
-      errEl.textContent = "未配置 amap_web_key，已仅在下方展示接口原始路径点数（可配置 Key 后显示地图）。";
+      errEl.textContent =
+        "未检测到地图 Key（请配置 frontend/amap-config.local.js 或 localStorage.amap_web_key），已仅在下方展示路径点数。";
       const pre = document.createElement("pre");
       pre.style.fontSize = "12px";
       pre.textContent = JSON.stringify(
@@ -191,7 +202,7 @@ function renderRouteMap() {
     }
 
     try {
-      await loadAmapScript(key);
+      await loadAmapScript(key, securityJsCode);
     } catch {
       errEl.textContent = "高德脚本加载失败。";
       return;
