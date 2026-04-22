@@ -12,6 +12,24 @@ from sqlalchemy.orm import Session
 from app.models.entities import ImportAuditLog, ManualRoute, SysSuggest
 
 
+def _apply_store_name_filter_to_query(
+    q, stores_col, store_name: Optional[str]
+):
+    """
+    按「拼载门店」CSV 子串匹配（不拆分为单店，与 Excel 存库格式一致）；
+    对 LIKE 通配符 % _ 作转义。
+    """
+    needle = (store_name or "").strip()
+    if not needle:
+        return q
+    esc = (
+        needle.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return q.filter(stores_col.like(f"%{esc}%", escape="\\"))
+
+
 REQUIRED_COLUMNS = [
     "排线日期",
     "运单号",
@@ -340,6 +358,15 @@ def _suggest_row_dict(r: SysSuggest) -> Dict[str, Any]:
     }
 
 
+def _attach_paged_sort_order(
+    items: List[Dict[str, Any]], page: int, page_size: int
+) -> None:
+    """在分页结果中写入 sort_order：当前查询顺序下的全局序号 1..total（含跨页，非主键 id）。"""
+    offset = (max(1, page) - 1) * page_size
+    for i, it in enumerate(items):
+        it["sort_order"] = offset + i + 1
+
+
 def _manual_row_dict(r: ManualRoute) -> Dict[str, Any]:
     order = None
     if r.delivery_store_order:
@@ -377,20 +404,29 @@ def fetch_import_batch_rows(db: Session, dataset_type: str, batch_id: str) -> Li
             .order_by(SysSuggest.id)
             .all()
         )
-        return [_suggest_row_dict(r) for r in rows]
-    rows = (
-        db.query(ManualRoute)
-        .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
-        .order_by(ManualRoute.id)
-        .all()
-    )
-    return [_manual_row_dict(r) for r in rows]
+        items = [_suggest_row_dict(r) for r in rows]
+    else:
+        rows = (
+            db.query(ManualRoute)
+            .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
+            .order_by(ManualRoute.id)
+            .all()
+        )
+        items = [_manual_row_dict(r) for r in rows]
+    for i, it in enumerate(items):
+        it["sort_order"] = i + 1
+    return items
 
 
 def fetch_import_batch_page(
-    db: Session, dataset_type: str, batch_id: str, page: int, page_size: int
+    db: Session,
+    dataset_type: str,
+    batch_id: str,
+    page: int,
+    page_size: int,
+    store_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """分页查询本批生效行；page_size 仅允许 20 或 50。"""
+    """分页查询本批生效行；page_size 仅允许 20 或 50。可选 `store_name` 拼载门店子串。"""
     if page_size not in (20, 50):
         raise ValueError("page_size must be 20 or 50")
     if page < 1:
@@ -403,14 +439,17 @@ def fetch_import_batch_page(
     offset = (page - 1) * page_size
     if dataset_type == "system":
         q = db.query(SysSuggest).filter(SysSuggest.batch_id == bid, SysSuggest.is_active == 1)
+        q = _apply_store_name_filter_to_query(q, SysSuggest.stores, store_name)
         total = q.count()
         rows = q.order_by(SysSuggest.id).offset(offset).limit(page_size).all()
         items = [_suggest_row_dict(r) for r in rows]
     else:
         q = db.query(ManualRoute).filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
+        q = _apply_store_name_filter_to_query(q, ManualRoute.stores, store_name)
         total = q.count()
         rows = q.order_by(ManualRoute.id).offset(offset).limit(page_size).all()
         items = [_manual_row_dict(r) for r in rows]
+    _attach_paged_sort_order(items, page, page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -422,8 +461,9 @@ def fetch_active_import_page(
     page: int,
     page_size: int,
     warehouse_name: Optional[str] = None,
+    store_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """按排线日期闭区间分页查询当前有效行（is_active=1）；page_size 仅 20 或 50。"""
+    """按排线日期闭区间分页查询当前有效行（is_active=1）；page_size 仅 20 或 50。可选 `store_name` 拼载门店子串。"""
     if page_size not in (20, 50):
         raise ValueError("page_size must be 20 or 50")
     if page < 1:
@@ -445,9 +485,11 @@ def fetch_active_import_page(
         q = base
         if wh:
             q = q.filter(SysSuggest.warehouse_name == wh)
+        q = _apply_store_name_filter_to_query(q, SysSuggest.stores, store_name)
         total = q.count()
         rows = q.order_by(SysSuggest.id).offset(offset).limit(page_size).all()
         items = [_suggest_row_dict(r) for r in rows]
+        _attach_paged_sort_order(items, page, page_size)
     else:
         base = db.query(ManualRoute).filter(
             ManualRoute.is_active == 1,
@@ -459,9 +501,11 @@ def fetch_active_import_page(
         q = base
         if wh:
             q = q.filter(ManualRoute.warehouse_name == wh)
+        q = _apply_store_name_filter_to_query(q, ManualRoute.stores, store_name)
         total = q.count()
         rows = q.order_by(ManualRoute.id).offset(offset).limit(page_size).all()
         items = [_manual_row_dict(r) for r in rows]
+        _attach_paged_sort_order(items, page, page_size)
     return {
         "items": items,
         "total": total,

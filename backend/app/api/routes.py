@@ -2,7 +2,7 @@ import os
 import tempfile
 import time
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 from urllib.parse import quote
 from zipfile import BadZipFile
@@ -26,7 +26,6 @@ from app.schemas.requests import (
 from app.services.compare_service import overview, run_compare
 from app.services.diff_analysis_service import list_multi_vehicle_stores
 from app.services.gaode_service import (
-    backfill_manual_routes,
     backfill_manual_routes_by_batch,
     backfill_manual_routes_by_date_window,
 )
@@ -215,54 +214,79 @@ def manual_backfill_routes(req: ManualBackfillRequest, db: Session = Depends(get
 def trigger_compare(req: CompareRequest, x_operator: Optional[str] = Header(default="system"), db: Session = Depends(get_db)):
     start = time.time()
     run_batch_id = uuid.uuid4().hex[:16]
-    calc_result = backfill_manual_routes(db, req.route_date)
-    result_count = run_compare(db, req.route_date, req.match_threshold)
+    calc_result = backfill_manual_routes_by_date_window(db, req.route_date_from, req.route_date_to)
+    result_count = 0
+    d = req.route_date_from
+    while d <= req.route_date_to:
+        result_count += run_compare(db, d, req.match_threshold)
+        d += timedelta(days=1)
     duration_ms = int((time.time() - start) * 1000)
     db.add(
         CompareRunLog(
             run_batch_id=run_batch_id,
-            route_date=req.route_date,
+            route_date=req.route_date_from,
             operator=x_operator or "system",
             duration_ms=duration_ms,
             result_count=result_count,
         )
     )
     db.commit()
-    return {"message": "compare finished", "run_batch_id": run_batch_id, "calc": calc_result, "result_count": result_count}
+    return {
+        "message": "compare finished",
+        "run_batch_id": run_batch_id,
+        "route_date_from": req.route_date_from,
+        "route_date_to": req.route_date_to,
+        "calc": calc_result,
+        "result_count": result_count,
+    }
 
 
 @router.get("/diff-analysis/multi-vehicle-stores")
 def get_diff_analysis_multi_vehicle_stores(
-    route_date: date = Query(..., description="排线日期，单日 YYYY-MM-DD"),
+    route_date_from: date = Query(..., description="排线日期起 YYYY-MM-DD（含）"),
+    route_date_to: date = Query(..., description="排线日期止 YYYY-MM-DD（含）"),
     dataset_type: str = Query(
         ...,
-        description="all（系统+手动合并）| system | manual",
+        description="all（不合并，手工/系统分侧一店多车）| system | manual",
     ),
+    warehouse_name: Optional[str] = Query(None, description="始发仓库，精确匹配；不传为全部"),
     db: Session = Depends(get_db),
 ):
+    if route_date_from > route_date_to:
+        raise HTTPException(
+            status_code=400, detail="route_date_from 不能晚于 route_date_to"
+        )
     try:
-        return list_multi_vehicle_stores(db, route_date, dataset_type)
+        return list_multi_vehicle_stores(
+            db, route_date_from, route_date_to, dataset_type, warehouse_name
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/compare/overview")
 def get_overview(
-    route_date: date = Query(...),
+    route_date_from: date = Query(..., description="排线日期起 YYYY-MM-DD（含）"),
+    route_date_to: date = Query(..., description="排线日期止 YYYY-MM-DD（含）"),
     warehouse_name: Optional[str] = Query(None, description="始发仓库，精确匹配；不传为全部"),
     db: Session = Depends(get_db),
 ):
-    return overview(db, route_date, warehouse_name)
+    if route_date_from > route_date_to:
+        raise HTTPException(status_code=400, detail="route_date_from 不能晚于 route_date_to")
+    return overview(db, route_date_from, route_date_to, warehouse_name)
 
 
 @router.get("/compare/results")
 def get_results(
-    route_date: date = Query(...),
+    route_date_from: date = Query(..., description="排线日期起 YYYY-MM-DD（含）"),
+    route_date_to: date = Query(..., description="排线日期止 YYYY-MM-DD（含）"),
     match_status: Optional[str] = Query(None),
     warehouse_name: Optional[str] = Query(None, description="始发仓库，精确匹配；不传为全部"),
     db: Session = Depends(get_db),
 ):
-    return fetch_results(db, route_date, match_status, warehouse_name)
+    if route_date_from > route_date_to:
+        raise HTTPException(status_code=400, detail="route_date_from 不能晚于 route_date_to")
+    return fetch_results(db, route_date_from, route_date_to, match_status, warehouse_name)
 
 
 @router.get("/compare/route-map/{compare_result_id}")
@@ -275,14 +299,18 @@ def get_route_map(compare_result_id: int, db: Session = Depends(get_db)):
 
 @router.get("/compare/export")
 def export_results(
-    route_date: date = Query(...),
+    route_date_from: date = Query(..., description="排线日期起 YYYY-MM-DD（含）"),
+    route_date_to: date = Query(..., description="排线日期止 YYYY-MM-DD（含）"),
     warehouse_name: Optional[str] = Query(None, description="始发仓库，精确匹配；不传为全部"),
     db: Session = Depends(get_db),
 ):
-    rows = fetch_results(db, route_date, None, warehouse_name)
-    file_path = os.path.join(tempfile.gettempdir(), f"compare_result_{route_date}.csv")
+    if route_date_from > route_date_to:
+        raise HTTPException(status_code=400, detail="route_date_from 不能晚于 route_date_to")
+    rows = fetch_results(db, route_date_from, route_date_to, None, warehouse_name)
+    tag = f"{route_date_from}_{route_date_to}" if route_date_from != route_date_to else f"{route_date_from}"
+    file_path = os.path.join(tempfile.gettempdir(), f"compare_result_{tag}.csv")
     export_results_csv(file_path, rows)
-    return FileResponse(file_path, filename=f"compare_result_{route_date}.csv", media_type="text/csv")
+    return FileResponse(file_path, filename=f"compare_result_{tag}.csv", media_type="text/csv")
 
 
 # --- 仓店距离 / 门店坐标 管理（CRUD + 导入导出）

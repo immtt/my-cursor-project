@@ -202,7 +202,7 @@ def test_overview_and_results_filter_by_warehouse(db_session):
 
     run_compare(db_session, rd, 0.5)
 
-    o_all = overview(db_session, rd)
+    o_all = overview(db_session, rd, rd)
     assert o_all["total"] == 2
     assert o_all["total_trip_diff"] == 0
     assert "total_volume_diff" in o_all
@@ -210,13 +210,13 @@ def test_overview_and_results_filter_by_warehouse(db_session):
     assert "total_duration_diff" in o_all
     assert set(o_all["warehouse_options"]) == {"华东仓", "华北仓"}
 
-    o_east = overview(db_session, rd, warehouse_name="华东仓")
+    o_east = overview(db_session, rd, rd, warehouse_name="华东仓")
     assert o_east["total"] == 1
     assert o_east["total_trip_diff"] == 0
 
-    rows_east = fetch_results(db_session, rd, warehouse_name="华东仓")
+    rows_east = fetch_results(db_session, rd, rd, None, "华东仓")
     assert len(rows_east) == 1
     assert rows_east[0]["sys_waybill_no"] == "S_A"
 
-    rows_wrong = fetch_results(db_session, rd, warehouse_name="不存在仓")
+    rows_wrong = fetch_results(db_session, rd, rd, None, "不存在仓")
     assert rows_wrong == []

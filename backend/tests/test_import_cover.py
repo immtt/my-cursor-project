@@ -248,6 +248,7 @@ def test_fetch_import_batch_rows_matches_import_batch(db_session):
     assert rows[0]["waybill_no"] == "SYS001"
     assert rows[0]["volume"] == 10.5
     assert rows[0]["route_date"] == "2026-04-20"
+    assert rows[0]["sort_order"] == 1
 
 
 def test_fetch_import_batch_page_paginates(db_session):
@@ -261,9 +262,13 @@ def test_fetch_import_batch_page_paginates(db_session):
     assert p1["page_size"] == 20
     assert len(p1["items"]) == 20
     assert p1["items"][0]["waybill_no"] == "SYS000"
+    assert p1["items"][0]["sort_order"] == 1
+    assert p1["items"][19]["sort_order"] == 20
     p2 = fetch_import_batch_page(db_session, "system", bid, 2, 20)
     assert len(p2["items"]) == 5
     assert p2["items"][0]["waybill_no"] == "SYS020"
+    assert p2["items"][0]["sort_order"] == 21
+    assert p2["items"][-1]["sort_order"] == 25
     p50 = fetch_import_batch_page(db_session, "system", bid, 1, 50)
     assert len(p50["items"]) == 25
 
@@ -347,6 +352,92 @@ def test_fetch_active_import_page_filters_by_warehouse_and_lists_options(db_sess
     )
     assert east["total"] == 1
     assert east["items"][0]["waybill_no"] == "W1"
+
+
+def test_fetch_active_import_page_filters_by_store_name_substring(db_session):
+    path = os.path.join(tempfile.gettempdir(), "sys_two_stores_one_date.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(
+        ["2026-04-20", "S_A", "线路A", "仓1", "门店甲,门店乙", "4.2米标箱", 1.0, "70%", 30, 60]
+    )
+    ws.append(["2026-04-20", "S_B", "线路A", "仓1", "门店丙", "4.2米标箱", 1.0, "70%", 30, 60])
+    wb.save(path)
+    import_excel(db_session, "system", path, operator="t")
+    all_rows = fetch_active_import_page(
+        db_session, "system", date(2026, 4, 1), date(2026, 4, 30), 1, 20
+    )
+    assert all_rows["total"] == 2
+    m = fetch_active_import_page(
+        db_session,
+        "system",
+        date(2026, 4, 1),
+        date(2026, 4, 30),
+        1,
+        20,
+        None,
+        "门店甲",
+    )
+    assert m["total"] == 1
+    assert m["items"][0]["waybill_no"] == "S_A"
+    c = fetch_active_import_page(
+        db_session,
+        "system",
+        date(2026, 4, 1),
+        date(2026, 4, 30),
+        1,
+        20,
+        None,
+        "门店丙",
+    )
+    assert c["total"] == 1
+    assert c["items"][0]["waybill_no"] == "S_B"
+
+
+def test_fetch_import_batch_page_filters_by_store_name(db_session):
+    path = os.path.join(tempfile.gettempdir(), "sys_batch_store_filter.xlsx")
+    _wb = Workbook()
+    _ws = _wb.active
+    _ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    _ws.append(
+        ["2026-04-20", "B_A", "线路A", "仓1", " Alpha店 ", "4.2米标箱", 1.0, "70%", 30, 60]
+    )
+    _ws.append(["2026-04-20", "B_B", "线路A", "仓1", "Beta店", "4.2米标箱", 1.0, "70%", 30, 60])
+    _wb.save(path)
+    out = import_excel(db_session, "system", path, operator="t")
+    bid = out["batch_id"]
+    p0 = fetch_import_batch_page(db_session, "system", bid, 1, 20, None)
+    assert p0["total"] == 2
+    p_alpha = fetch_import_batch_page(db_session, "system", bid, 1, 20, "Alpha")
+    assert p_alpha["total"] == 1
+    assert p_alpha["items"][0]["waybill_no"] == "B_A"
 
 
 def test_fetch_active_import_page_rejects_inverted_range(db_session):

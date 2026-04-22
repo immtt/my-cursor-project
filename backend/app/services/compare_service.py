@@ -115,10 +115,21 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
 
 
 def warehouse_options_for_route_date(db: Session, route_date) -> List[str]:
+    return warehouse_options_for_date_range(db, route_date, route_date)
+
+
+def warehouse_options_for_date_range(
+    db: Session, route_date_from, route_date_to
+) -> List[str]:
+    """闭区间内、当前有效行涉及的全部始发仓名。"""
     sys_names = [
         str(n).strip()
         for (n,) in db.query(SysSuggest.warehouse_name)
-        .filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1)
+        .filter(
+            SysSuggest.route_date >= route_date_from,
+            SysSuggest.route_date <= route_date_to,
+            SysSuggest.is_active == 1,
+        )
         .distinct()
         .all()
         if n
@@ -126,7 +137,11 @@ def warehouse_options_for_route_date(db: Session, route_date) -> List[str]:
     man_names = [
         str(n).strip()
         for (n,) in db.query(ManualRoute.warehouse_name)
-        .filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1)
+        .filter(
+            ManualRoute.route_date >= route_date_from,
+            ManualRoute.route_date <= route_date_to,
+            ManualRoute.is_active == 1,
+        )
         .distinct()
         .all()
         if n
@@ -168,12 +183,26 @@ def _count_active_routes(
     db: Session, route_date, warehouse_name: Optional[str]
 ) -> Tuple[int, int]:
     """当日有效运单行数：系统、手工。可选按始发仓库精确匹配。"""
+    return _count_active_routes_range(db, route_date, route_date, warehouse_name)
+
+
+def _count_active_routes_range(
+    db: Session,
+    route_date_from,
+    route_date_to,
+    warehouse_name: Optional[str],
+) -> Tuple[int, int]:
+    """闭区间内各日有效运单行数求和。可选按始发仓库精确匹配。"""
     wh = (warehouse_name or "").strip()
     q_s = db.query(SysSuggest).filter(
-        SysSuggest.route_date == route_date, SysSuggest.is_active == 1
+        SysSuggest.route_date >= route_date_from,
+        SysSuggest.route_date <= route_date_to,
+        SysSuggest.is_active == 1,
     )
     q_m = db.query(ManualRoute).filter(
-        ManualRoute.route_date == route_date, ManualRoute.is_active == 1
+        ManualRoute.route_date >= route_date_from,
+        ManualRoute.route_date <= route_date_to,
+        ManualRoute.is_active == 1,
     )
     if wh:
         q_s = q_s.filter(SysSuggest.warehouse_name == wh)
@@ -181,9 +210,21 @@ def _count_active_routes(
     return q_s.count(), q_m.count()
 
 
-def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
+def overview(
+    db: Session,
+    route_date_from,
+    route_date_to,
+    warehouse_name: Optional[str] = None,
+):
     wh = (warehouse_name or "").strip()
-    all_rows = db.query(CompareResult).filter(CompareResult.route_date == route_date).all()
+    all_rows = (
+        db.query(CompareResult)
+        .filter(
+            CompareResult.route_date >= route_date_from,
+            CompareResult.route_date <= route_date_to,
+        )
+        .all()
+    )
     sys_map, man_map = _side_maps_for_compare_rows(db, all_rows)
     rows = all_rows
     if wh:
@@ -201,11 +242,15 @@ def overview(db: Session, route_date, warehouse_name: Optional[str] = None):
     durs = [int(r.est_duration_diff) for r in rows if r.est_duration_diff is not None]
     avg_dur = round(float(sum(durs)) / len(durs), 2) if durs else 0.0
     total_duration = int(sum(durs)) if durs else 0
-    n_sys, n_man = _count_active_routes(db, route_date, wh if wh else None)
+    n_sys, n_man = _count_active_routes_range(
+        db, route_date_from, route_date_to, wh if wh else None
+    )
     total_trip_diff = n_sys - n_man
-    opts = warehouse_options_for_route_date(db, route_date)
+    opts = warehouse_options_for_date_range(db, route_date_from, route_date_to)
     return {
-        "route_date": route_date,
+        "route_date": route_date_from,
+        "route_date_from": route_date_from,
+        "route_date_to": route_date_to,
         "total": total,
         "full_count": full_count,
         "partial_count": partial_count,

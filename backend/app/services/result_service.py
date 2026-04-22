@@ -10,11 +10,15 @@ from app.utils.store_match import diff_stores_by_side, same_and_diff_stores_csv
 
 def fetch_results(
     db: Session,
-    route_date,
+    route_date_from,
+    route_date_to,
     match_status: Optional[str] = None,
     warehouse_name: Optional[str] = None,
 ):
-    q = db.query(CompareResult).filter(CompareResult.route_date == route_date)
+    q = db.query(CompareResult).filter(
+        CompareResult.route_date >= route_date_from,
+        CompareResult.route_date <= route_date_to,
+    )
     if match_status:
         q = q.filter(CompareResult.match_status == match_status)
     rows = q.all()

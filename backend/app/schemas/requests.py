@@ -5,8 +5,15 @@ from pydantic import BaseModel, model_validator
 
 
 class CompareRequest(BaseModel):
-    route_date: date
+    route_date_from: date
+    route_date_to: date
     match_threshold: float = 0.5  # 保留字段；匹配状态按 PRD 分档，该值不再参与计算
+
+    @model_validator(mode="after")
+    def _date_range(self):
+        if self.route_date_from > self.route_date_to:
+            raise ValueError("route_date_from 不能晚于 route_date_to")
+        return self
 
 
 class ManualBackfillRequest(BaseModel):
