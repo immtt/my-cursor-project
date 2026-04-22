@@ -37,6 +37,10 @@ python3 -m http.server 5173
 
 - 页面入口：`http://127.0.0.1:5173`
 
+比对结果页「地图」使用高德 JS API 2.0。浏览器控制台执行一次  
+`localStorage.setItem('amap_web_key','你的Web端Key')`  
+后刷新，即可在路线地图页渲染轨迹（与后端 REST Key 不同）。
+
 ## Git 分支规范
 
 - `main`：生产环境分支，保持稳定，禁止直接提交
