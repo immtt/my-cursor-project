@@ -7,5 +7,9 @@ class CompareRequest(BaseModel):
     match_threshold: float = 0.5
 
 
+class ManualBackfillRequest(BaseModel):
+    batch_id: str
+
+
 class ExportRequest(BaseModel):
     route_date: date

@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.entities import AddressCache, GaodeCalcFailureLog, ManualRoute, SysSuggest
+from app.models.entities import AddressCache, GaodeCalcFailureLog, ManualRoute, StoreCoordinate, SysSuggest
 
 
 def _mock_geocode(address_name: str) -> tuple[float, float]:
@@ -21,6 +21,10 @@ def _mock_geocode(address_name: str) -> tuple[float, float]:
 def get_or_create_coord(db: Session, address_name: str, address_type: str):
     if not address_name:
         raise ValueError("address is empty")
+    if address_type == "store":
+        sc = db.query(StoreCoordinate).filter(StoreCoordinate.store_name == address_name).first()
+        if sc:
+            return sc.longitude, sc.latitude
     cached = db.query(AddressCache).filter(AddressCache.address_name == address_name).first()
     if cached:
         return cached.longitude, cached.latitude
@@ -97,12 +101,7 @@ def _estimate_route_with_retry(warehouse: str, stores: List[str], db: Session, m
     return None, retry_count, "unknown"
 
 
-def backfill_manual_routes(db: Session, route_date):
-    rows = (
-        db.query(ManualRoute)
-        .filter(ManualRoute.route_date == route_date, ManualRoute.calc_status.in_([0, 2]), ManualRoute.is_active == 1)
-        .all()
-    )
+def _run_manual_backfill_for_rows(db: Session, rows: List[ManualRoute]) -> dict:
     updated = 0
     failed = 0
     failures = []
@@ -133,6 +132,28 @@ def backfill_manual_routes(db: Session, route_date):
             )
     db.commit()
     return {"updated": updated, "failed": failed, "failures": failures}
+
+
+def backfill_manual_routes(db: Session, route_date):
+    rows = (
+        db.query(ManualRoute)
+        .filter(ManualRoute.route_date == route_date, ManualRoute.calc_status.in_([0, 2]), ManualRoute.is_active == 1)
+        .all()
+    )
+    return _run_manual_backfill_for_rows(db, rows)
+
+
+def backfill_manual_routes_by_batch(db: Session, batch_id: str) -> dict:
+    """对指定导入批次下待补算的手动排线行做里程/时效估算（与比对前补算逻辑一致）。"""
+    bid = str(batch_id).strip() if batch_id else ""
+    if not bid:
+        raise ValueError("batch_id required")
+    rows = (
+        db.query(ManualRoute)
+        .filter(ManualRoute.batch_id == bid, ManualRoute.calc_status.in_([0, 2]), ManualRoute.is_active == 1)
+        .all()
+    )
+    return _run_manual_backfill_for_rows(db, rows)
 
 
 def build_markers(warehouse: str, stores_csv: str, db: Session) -> List[dict]:

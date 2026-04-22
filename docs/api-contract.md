@@ -34,6 +34,44 @@
 }
 ```
 
+**本批导入行查询**（与模板同类：**独立路径** `/import-batch`，勿用 `/import/rows`；实现放在 **`app/main.py`** 与 `/health` 同应用，避免进程未重载时缺路由）：
+
+- `GET /api/import-batch?dataset_type=system|manual&batch_id=<batch_id>&page=1&page_size=20|50`
+  - `page` 默认 `1`，须 ≥1；`page_size` 仅 **`20`** 或 **`50`**，默认 **`20`**；非法组合返回 **400**。
+- 返回：`{ "items": [...], "total": n, "page": 1, "page_size": 20 }`（非数组）
+
+**按排线日期查当前有效导入行**（与 `import-batch` 同属 **`app/main.py`**；不限定 `batch_id`，仅 **`is_active=1`** 的行）：
+
+- `GET /api/import-active?dataset_type=system|manual&route_date_from=YYYY-MM-DD&route_date_to=YYYY-MM-DD&page=1&page_size=20|50`
+  - 闭区间：排线日期 **≥ `route_date_from` 且 ≤ `route_date_to`**；须 **`route_date_from` ≤ `route_date_to`**，否则 **400**。
+  - 分页参数与 **`import-batch`** 相同。
+- 返回：与 **`import-batch`** 相同结构 `{ "items", "total", "page", "page_size" }`。
+
+**手动排线按批次补算预估里程/时效**（仅 **`manual_route`** 中 `is_active=1` 且 `calc_status` 待补算/失败重试的行；与 **`POST /api/compare/run`** 内 `calc` 同源逻辑，**不执行比对**）：
+
+- `POST /api/manual/backfill`
+- `Content-Type: application/json`
+
+请求体：
+
+```json
+{ "batch_id": "<导入接口返回的 batch_id>" }
+```
+
+响应（与 **`compare/run`** 返回中的 **`calc`** 结构一致）：
+
+```json
+{
+  "updated": 1,
+  "failed": 0,
+  "failures": []
+}
+```
+
+- `failures` 中每项形如 `{ "store": "...", "reason": "...", "retry_count": n }`。
+- 该 `batch_id` 下无待补算行时 **`updated`/`failed` 均为 0**，仍 **200**。
+- `batch_id` 缺失或全空白返回 **400**。
+
 ### 2) 执行比对
 
 - `POST /api/compare/run`

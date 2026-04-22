@@ -5,6 +5,17 @@ set -e
 BACKEND_PORT="${BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+echo "释放端口 ${BACKEND_PORT}（后端）、${FRONTEND_PORT}（前端）若被占用…"
+for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
+  pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+  fi
+done
+sleep 1
+
 cd "$ROOT/backend"
 if [ ! -d .venv ]; then
   python3 -m venv .venv
@@ -19,12 +30,18 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 0.0.0.0：本机 127.0.0.1 与局域网 IP 均可访问，避免用手机/局域网打开前端时仍连 127.0.0.1 失败
-uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" &
+uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload &
 BACK_PID=$!
 
 sleep 2
 if curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null; then
-  echo "后端健康检查: OK（本机 http://127.0.0.1:${BACKEND_PORT}/health ，局域网请用本机 IP 同端口）"
+  echo "后端健康检查: OK（本机 http://127.0.0.1:${BACKEND_PORT}/health ）"
+  ibcode=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${BACKEND_PORT}/api/import-batch?dataset_type=system&batch_id=__startup_check__&page=1&page_size=20" || echo "0")
+  if [ "$ibcode" = "200" ]; then
+    echo "导入后明细 API: OK（GET /api/import-batch 已注册）"
+  else
+    echo "【警告】GET /api/import-batch 未返回 200（当前 HTTP $ibcode），请执行 ./scripts/restart-dev.sh 或确认已保存 app/main.py 并重启 uvicorn。"
+  fi
 else
   echo ""
   echo "【警告】无法访问 http://127.0.0.1:${BACKEND_PORT}/health ，前端导入/比对将失败。"

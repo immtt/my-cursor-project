@@ -249,14 +249,45 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
     }
 
 
+def _suggest_row_dict(r: SysSuggest) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "route_date": r.route_date.isoformat() if r.route_date else None,
+        "waybill_no": r.waybill_no,
+        "route_line": r.route_line,
+        "warehouse_name": r.warehouse_name,
+        "stores": r.stores,
+        "vehicle_type": r.vehicle_type,
+        "volume": r.volume,
+        "load_rate": r.load_rate,
+        "est_distance": r.est_distance,
+        "est_duration": r.est_duration,
+    }
+
+
+def _manual_row_dict(r: ManualRoute) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "route_date": r.route_date.isoformat() if r.route_date else None,
+        "waybill_no": r.waybill_no,
+        "route_line": r.route_line,
+        "warehouse_name": r.warehouse_name,
+        "stores": r.stores,
+        "vehicle_type": r.vehicle_type,
+        "volume": r.volume,
+        "load_rate": r.load_rate,
+        "est_distance": r.est_distance,
+        "est_duration": r.est_duration,
+    }
+
+
 def fetch_import_batch_rows(db: Session, dataset_type: str, batch_id: str) -> List[Dict[str, Any]]:
-    """按导入返回的 batch_id 查询本批生效行（仅 is_active=1）。"""
+    """按导入返回的 batch_id 查询本批生效行（仅 is_active=1），全量。"""
     if dataset_type not in {"system", "manual"}:
         raise ValueError("dataset_type must be system or manual")
     if not batch_id or not str(batch_id).strip():
         raise ValueError("batch_id required")
     bid = str(batch_id).strip()
-    out: List[Dict[str, Any]] = []
     if dataset_type == "system":
         rows = (
             db.query(SysSuggest)
@@ -264,43 +295,77 @@ def fetch_import_batch_rows(db: Session, dataset_type: str, batch_id: str) -> Li
             .order_by(SysSuggest.id)
             .all()
         )
-        for r in rows:
-            out.append(
-                {
-                    "id": r.id,
-                    "route_date": r.route_date.isoformat() if r.route_date else None,
-                    "waybill_no": r.waybill_no,
-                    "route_line": r.route_line,
-                    "warehouse_name": r.warehouse_name,
-                    "stores": r.stores,
-                    "vehicle_type": r.vehicle_type,
-                    "volume": r.volume,
-                    "load_rate": r.load_rate,
-                    "est_distance": r.est_distance,
-                    "est_duration": r.est_duration,
-                }
-            )
+        return [_suggest_row_dict(r) for r in rows]
+    rows = (
+        db.query(ManualRoute)
+        .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
+        .order_by(ManualRoute.id)
+        .all()
+    )
+    return [_manual_row_dict(r) for r in rows]
+
+
+def fetch_import_batch_page(
+    db: Session, dataset_type: str, batch_id: str, page: int, page_size: int
+) -> Dict[str, Any]:
+    """分页查询本批生效行；page_size 仅允许 20 或 50。"""
+    if page_size not in (20, 50):
+        raise ValueError("page_size must be 20 or 50")
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if dataset_type not in {"system", "manual"}:
+        raise ValueError("dataset_type must be system or manual")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id required")
+    bid = str(batch_id).strip()
+    offset = (page - 1) * page_size
+    if dataset_type == "system":
+        q = db.query(SysSuggest).filter(SysSuggest.batch_id == bid, SysSuggest.is_active == 1)
+        total = q.count()
+        rows = q.order_by(SysSuggest.id).offset(offset).limit(page_size).all()
+        items = [_suggest_row_dict(r) for r in rows]
     else:
-        rows = (
-            db.query(ManualRoute)
-            .filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
-            .order_by(ManualRoute.id)
-            .all()
+        q = db.query(ManualRoute).filter(ManualRoute.batch_id == bid, ManualRoute.is_active == 1)
+        total = q.count()
+        rows = q.order_by(ManualRoute.id).offset(offset).limit(page_size).all()
+        items = [_manual_row_dict(r) for r in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def fetch_active_import_page(
+    db: Session,
+    dataset_type: str,
+    route_date_from: date,
+    route_date_to: date,
+    page: int,
+    page_size: int,
+) -> Dict[str, Any]:
+    """按排线日期闭区间分页查询当前有效行（is_active=1）；page_size 仅 20 或 50。"""
+    if page_size not in (20, 50):
+        raise ValueError("page_size must be 20 or 50")
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if dataset_type not in {"system", "manual"}:
+        raise ValueError("dataset_type must be system or manual")
+    if route_date_from > route_date_to:
+        raise ValueError("route_date_from must be <= route_date_to")
+    offset = (page - 1) * page_size
+    if dataset_type == "system":
+        q = db.query(SysSuggest).filter(
+            SysSuggest.is_active == 1,
+            SysSuggest.route_date >= route_date_from,
+            SysSuggest.route_date <= route_date_to,
         )
-        for r in rows:
-            out.append(
-                {
-                    "id": r.id,
-                    "route_date": r.route_date.isoformat() if r.route_date else None,
-                    "waybill_no": r.waybill_no,
-                    "route_line": r.route_line,
-                    "warehouse_name": r.warehouse_name,
-                    "stores": r.stores,
-                    "vehicle_type": r.vehicle_type,
-                    "volume": r.volume,
-                    "load_rate": r.load_rate,
-                    "est_distance": r.est_distance,
-                    "est_duration": r.est_duration,
-                }
-            )
-    return out
+        total = q.count()
+        rows = q.order_by(SysSuggest.id).offset(offset).limit(page_size).all()
+        items = [_suggest_row_dict(r) for r in rows]
+    else:
+        q = db.query(ManualRoute).filter(
+            ManualRoute.is_active == 1,
+            ManualRoute.route_date >= route_date_from,
+            ManualRoute.route_date <= route_date_to,
+        )
+        total = q.count()
+        rows = q.order_by(ManualRoute.id).offset(offset).limit(page_size).all()
+        items = [_manual_row_dict(r) for r in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}

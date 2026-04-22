@@ -1,6 +1,6 @@
 const app = document.getElementById("app");
 
-/** 与 scripts/start-dev.sh 中 BACKEND_PORT 一致；仅在不设置 __API_ORIGIN__ 时参与拼接 */
+/** 与 scripts/start-dev.sh 中 BACKEND_PORT 一致。__API_ORIGIN__ 可写为 http://host:8080 或带末尾的 /api（会规范化，避免 /api/api 导致 404） */
 const API_PORT = (() => {
   const x = window.__API_PORT__;
   if (x == null || x === "") return 8080;
@@ -9,7 +9,14 @@ const API_PORT = (() => {
 })();
 
 function inferApiOrigin() {
-  if (window.__API_ORIGIN__) return String(window.__API_ORIGIN__).replace(/\/$/, "");
+  if (window.__API_ORIGIN__) {
+    let s = String(window.__API_ORIGIN__).replace(/\/$/, "");
+    if (s.toLowerCase().endsWith("/api")) {
+      s = s.slice(0, -4);
+      s = s.replace(/\/$/, "");
+    }
+    return s;
+  }
   const host = window.location.hostname;
   const proto = window.location.protocol;
   if (host && (proto === "http:" || proto === "https:")) {
@@ -21,6 +28,34 @@ function inferApiOrigin() {
 
 const API_ORIGIN = inferApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
+
+const IMPORT_LAST_BATCH_KEY = "smart_route_import_last_batch";
+const IMPORT_LIST_VIEW_TYPE_KEY = "smart_route_import_list_view_type";
+
+function getLastBatchIds() {
+  try {
+    const raw = sessionStorage.getItem(IMPORT_LAST_BATCH_KEY);
+    if (!raw) return { system: null, manual: null };
+    const o = JSON.parse(raw);
+    return { system: o.system || null, manual: o.manual || null };
+  } catch {
+    return { system: null, manual: null };
+  }
+}
+
+function setLastBatchId(type, batchId) {
+  const cur = getLastBatchIds();
+  cur[type] = batchId;
+  sessionStorage.setItem(IMPORT_LAST_BATCH_KEY, JSON.stringify(cur));
+}
+
+function setImportListViewType(type) {
+  sessionStorage.setItem(IMPORT_LIST_VIEW_TYPE_KEY, type);
+}
+
+function getImportListViewType() {
+  return sessionStorage.getItem(IMPORT_LIST_VIEW_TYPE_KEY) || "system";
+}
 
 function backendUnreachableHtml(err) {
   const detail = err && err.message ? `（${err.message}）` : "";
@@ -46,25 +81,23 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function renderImportListTable(rows, datasetTypeLabel) {
-  if (!rows || !rows.length) {
-    return `<p class="empty-hint">本批无明细行。</p>`;
-  }
-  const ths = [
-    "ID",
-    "排线日期",
-    "运单号",
-    "线路",
-    "仓库",
-    "门店",
-    "车型",
-    "体积",
-    "装载率",
-    "预估里程",
-    "预估时效",
-  ];
-  const head = ths.map((t) => `<th>${escapeHtml(t)}</th>`).join("");
-  const body = rows
+const IMPORT_LIST_TABLE_HEADERS = [
+  "ID",
+  "排线日期",
+  "运单号",
+  "线路",
+  "仓库",
+  "门店",
+  "车型",
+  "体积",
+  "装载率",
+  "预估里程",
+  "预估时效",
+];
+
+function renderImportListTableRowsOnly(rows) {
+  const head = IMPORT_LIST_TABLE_HEADERS.map((t) => `<th>${escapeHtml(t)}</th>`).join("");
+  const body = (rows || [])
     .map((r) => {
       const cells = [
         r.id,
@@ -82,15 +115,460 @@ function renderImportListTable(rows, datasetTypeLabel) {
       return `<tr>${cells.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`;
     })
     .join("");
-  return `<p class="page-head" style="margin-top:1rem;margin-bottom:0.5rem"><strong>本批导入明细</strong> · ${escapeHtml(
-    datasetTypeLabel
-  )} · 共 ${rows.length} 行</p>
-    <div class="table-scroll">
+  return `<div class="table-scroll">
       <table class="data-table">
         <thead><tr>${head}</tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>`;
+}
+
+function datasetTypeLabel(v) {
+  return v === "system" ? "系统建议数据" : "手动排线数据";
+}
+
+function buildImportListPanelHtml({
+  selectedDatasetType,
+  page,
+  pageSize,
+  payload,
+  queryMode = "batch",
+  dateFrom = "",
+  dateTo = "",
+}) {
+  const mode = queryMode === "range" ? "range" : "batch";
+  const safeFrom = dateFrom || "";
+  const safeTo = dateTo || "";
+  const total = Number(payload.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+  const label = datasetTypeLabel(selectedDatasetType);
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const tableInner =
+    total === 0
+      ? mode === "range"
+        ? `<p class="empty-hint">该排线日期范围内无有效数据。</p>`
+        : `<p class="empty-hint">本批无明细行。</p>`
+      : items.length === 0
+        ? `<p class="empty-hint">本页无数据。</p>`
+        : renderImportListTableRowsOnly(items);
+  const rangeSummary =
+    mode === "range" && safeFrom && safeTo
+      ? ` · 排线 ${escapeHtml(safeFrom)}～${escapeHtml(safeTo)}`
+      : mode === "batch"
+        ? " · 本批"
+        : "";
+  return `<div id="importListPanel" class="import-list-panel" data-query-mode="${mode}" data-date-from="${escapeHtml(
+    safeFrom
+  )}" data-date-to="${escapeHtml(safeTo)}" data-page="${page}" data-total="${total}">
+      <p class="page-head" style="margin-top:1rem;margin-bottom:0.5rem"><strong>导入明细列表</strong><br/><small class="empty-hint" style="font-size:0.9em">仅展示当前有效数据（覆盖导入后旧批次自动失效）。</small></p>
+      <div class="toolbar import-list-toolbar">
+        <div class="field">
+          <span class="field-label">列表数据类型</span>
+          <select id="importListSource">
+            <option value="system" ${selectedDatasetType === "system" ? "selected" : ""}>系统建议数据</option>
+            <option value="manual" ${selectedDatasetType === "manual" ? "selected" : ""}>手动排线数据</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">排线日期起</span>
+          <input type="date" id="importListDateFrom" value="${escapeHtml(safeFrom)}" />
+        </div>
+        <div class="field">
+          <span class="field-label">排线日期止</span>
+          <input type="date" id="importListDateTo" value="${escapeHtml(safeTo)}" />
+        </div>
+        <button type="button" class="btn btn--primary" id="importListQueryBtn">查询</button>
+        <button type="button" class="btn btn--secondary" id="importListManualCalcBtn" ${
+          selectedDatasetType !== "manual" ? "hidden" : ""
+        }>补算预估里程/时效</button>
+        <div class="field">
+          <span class="field-label">每页</span>
+          <select id="importListPageSize">
+            <option value="20" ${pageSize === 20 ? "selected" : ""}>20 条</option>
+            <option value="50" ${pageSize === 50 ? "selected" : ""}>50 条</option>
+          </select>
+        </div>
+        <button type="button" class="btn btn--secondary" id="importListPrev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+        <button type="button" class="btn btn--primary" id="importListNext" ${
+          page >= totalPages ? "disabled" : ""
+        }>下一页</button>
+      </div>
+      <p id="importListSummary" class="import-list-summary">${escapeHtml(label)}${rangeSummary} · 第 ${page} / ${totalPages} 页 · 共 ${total} 条</p>
+      <div id="importListBackfillNotice" class="import-list-backfill-notice"></div>
+      <div id="importListTableWrap">${tableInner}</div>
+    </div>`;
+}
+
+async function fetchImportBatchPage(datasetType, batchId, page, pageSize) {
+  const q = `dataset_type=${encodeURIComponent(datasetType)}&batch_id=${encodeURIComponent(
+    batchId
+  )}&page=${page}&page_size=${pageSize}`;
+  const r = await fetch(`${API_BASE}/import-batch?${q}`);
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`HTTP ${r.status} ${t.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+async function fetchImportActivePage(datasetType, routeDateFrom, routeDateTo, page, pageSize) {
+  const q = new URLSearchParams({
+    dataset_type: datasetType,
+    route_date_from: routeDateFrom,
+    route_date_to: routeDateTo,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  const r = await fetch(`${API_BASE}/import-active?${q}`);
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`HTTP ${r.status} ${t.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+function updateImportListPanelDom(wrap, params) {
+  const {
+    selectedDatasetType,
+    page,
+    pageSize,
+    payload,
+    queryMode = "batch",
+    dateFrom = "",
+    dateTo = "",
+  } = params;
+  const panelHtml = buildImportListPanelHtml({
+    selectedDatasetType,
+    page,
+    pageSize,
+    payload,
+    queryMode,
+    dateFrom,
+    dateTo,
+  });
+  const panel = wrap.querySelector("#importListPanel");
+  if (panel) {
+    const d = document.createElement("div");
+    d.innerHTML = panelHtml.trim();
+    panel.replaceWith(d.firstElementChild);
+  }
+}
+
+async function syncImportListPanel(wrap, options = {}) {
+  const panelEl = wrap.querySelector("#importListPanel");
+  const datasetType =
+    options.datasetType ?? wrap.querySelector("#importListSource")?.value ?? "system";
+  const pageSize =
+    options.pageSize ?? (Number(wrap.querySelector("#importListPageSize")?.value) || 20);
+  const page = options.page ?? (panelEl ? Number(panelEl.dataset.page) || 1 : 1);
+
+  let queryMode = options.queryMode;
+  if (queryMode == null) {
+    queryMode = panelEl?.getAttribute("data-query-mode") === "range" ? "range" : "batch";
+  }
+  let dateFrom = options.dateFrom;
+  let dateTo = options.dateTo;
+  if (dateFrom == null) dateFrom = panelEl?.dataset.dateFrom ?? "";
+  if (dateTo == null) dateTo = panelEl?.dataset.dateTo ?? "";
+
+  const ids = getLastBatchIds();
+  const batchId = ids[datasetType];
+
+  if (queryMode === "range") {
+    if (!dateFrom || !dateTo) {
+      updateImportListPanelDom(wrap, {
+        selectedDatasetType: datasetType,
+        page: 1,
+        pageSize,
+        payload: { items: [], total: 0 },
+        queryMode: "range",
+        dateFrom,
+        dateTo,
+      });
+      const tw = wrap.querySelector("#importListTableWrap");
+      if (tw) {
+        tw.innerHTML = `<div class="alert alert--muted">请选择排线日期起、止后点击「查询」。</div>`;
+      }
+      return;
+    }
+    if (dateFrom > dateTo) {
+      const tw = wrap.querySelector("#importListTableWrap");
+      if (tw) {
+        tw.innerHTML = `<div class="alert alert--error">日期起不能晚于日期止。</div>`;
+      }
+      return;
+    }
+    try {
+      const payload = await fetchImportActivePage(datasetType, dateFrom, dateTo, page, pageSize);
+      updateImportListPanelDom(wrap, {
+        selectedDatasetType: datasetType,
+        page,
+        pageSize,
+        payload,
+        queryMode: "range",
+        dateFrom,
+        dateTo,
+      });
+    } catch (err) {
+      const tw = wrap.querySelector("#importListTableWrap");
+      if (tw) tw.innerHTML = backendUnreachableHtml(err);
+    }
+    return;
+  }
+
+  if (!batchId) {
+    const df = panelEl?.querySelector("#importListDateFrom")?.value ?? "";
+    const dt = panelEl?.querySelector("#importListDateTo")?.value ?? "";
+    const emptyHtml = buildImportListPanelHtml({
+      selectedDatasetType: datasetType,
+      page: 1,
+      pageSize,
+      payload: { items: [], total: 0 },
+      queryMode: "batch",
+      dateFrom: df,
+      dateTo: dt,
+    });
+    const panel = wrap.querySelector("#importListPanel");
+    if (panel) {
+      const d = document.createElement("div");
+      d.innerHTML = emptyHtml.trim();
+      panel.replaceWith(d.firstElementChild);
+    } else {
+      wrap.insertAdjacentHTML("beforeend", emptyHtml);
+    }
+    const tw = wrap.querySelector("#importListTableWrap");
+    if (tw) {
+      tw.innerHTML = `<div class="alert alert--muted">请先导入该类型数据以查看本批列表，或填写排线日期后点击「查询」按日期浏览。</div>`;
+    }
+    return;
+  }
+
+  try {
+    const payload = await fetchImportBatchPage(datasetType, batchId, page, pageSize);
+    const df = panelEl?.querySelector("#importListDateFrom")?.value ?? "";
+    const dt = panelEl?.querySelector("#importListDateTo")?.value ?? "";
+    updateImportListPanelDom(wrap, {
+      selectedDatasetType: datasetType,
+      page,
+      pageSize,
+      payload,
+      queryMode: "batch",
+      dateFrom: df,
+      dateTo: dt,
+    });
+  } catch (err) {
+    const tw = wrap.querySelector("#importListTableWrap");
+    if (tw) tw.innerHTML = backendUnreachableHtml(err);
+  }
+}
+
+async function refreshImportListFromCurrentPanel(wrap) {
+  const panel = wrap.querySelector("#importListPanel");
+  if (!panel) return;
+  const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+  const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+  const page = Number(panel.dataset.page) || 1;
+  const mode = panel.getAttribute("data-query-mode") === "range" ? "range" : "batch";
+  const dateFrom = panel.dataset.dateFrom ?? "";
+  const dateTo = panel.dataset.dateTo ?? "";
+  if (mode === "range" && dateFrom && dateTo) {
+    await syncImportListPanel(wrap, { datasetType, page, pageSize, queryMode: "range", dateFrom, dateTo });
+  } else {
+    await syncImportListPanel(wrap, { datasetType, page, pageSize, queryMode: "batch" });
+  }
+}
+
+function bindImportListInteractions(wrap) {
+  if (wrap.dataset.importListBound === "1") return;
+  wrap.dataset.importListBound = "1";
+  wrap.addEventListener("change", (e) => {
+    const t = e.target;
+    const panel = wrap.querySelector("#importListPanel");
+    const mode = panel?.getAttribute("data-query-mode") === "range" ? "range" : "batch";
+    const dateFrom = panel?.dataset.dateFrom ?? "";
+    const dateTo = panel?.dataset.dateTo ?? "";
+    if (t.id === "importListSource") {
+      setImportListViewType(t.value);
+      const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+      if (mode === "range" && dateFrom && dateTo) {
+        void syncImportListPanel(wrap, {
+          datasetType: t.value,
+          page: 1,
+          pageSize,
+          queryMode: "range",
+          dateFrom,
+          dateTo,
+        });
+      } else {
+        void syncImportListPanel(wrap, { datasetType: t.value, page: 1, pageSize, queryMode: "batch" });
+      }
+    } else if (t.id === "importListPageSize") {
+      const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+      const pageSize = Number(t.value) || 20;
+      if (mode === "range" && dateFrom && dateTo) {
+        void syncImportListPanel(wrap, {
+          datasetType,
+          page: 1,
+          pageSize,
+          queryMode: "range",
+          dateFrom,
+          dateTo,
+        });
+      } else {
+        void syncImportListPanel(wrap, { datasetType, page: 1, pageSize, queryMode: "batch" });
+      }
+    }
+  });
+  wrap.addEventListener("click", (e) => {
+    const calcBtn = e.target.closest("#importListManualCalcBtn");
+    if (calcBtn) {
+      const notice = wrap.querySelector("#importListBackfillNotice");
+      const manualBid = getLastBatchIds().manual;
+      if (!manualBid) {
+        if (notice) {
+          notice.className = "alert alert--muted";
+          notice.innerHTML = "请先在<strong>手动排线数据</strong>下完成一次导入后再补算。";
+        }
+        return;
+      }
+      if (notice) {
+        notice.className = "alert alert--muted";
+        notice.innerHTML = "正在补算预估里程/时效…";
+      }
+      void (async () => {
+        try {
+          const r = await fetch(`${API_BASE}/manual/backfill`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ batch_id: manualBid }),
+          });
+          let data;
+          try {
+            data = await r.json();
+          } catch {
+            data = {};
+          }
+          if (!r.ok) {
+            const errHtml = `<strong>补算失败</strong>（HTTP ${r.status}）<pre>${escapeHtml(
+              JSON.stringify(data, null, 2).slice(0, 800)
+            )}</pre>`;
+            if (notice) {
+              notice.className = "alert alert--error";
+              notice.innerHTML = errHtml;
+            }
+            return;
+          }
+          const okClass = data.failed ? "alert alert--error" : "alert alert--muted";
+          let okHtml = `${escapeHtml(`补算完成：成功 ${data.updated} 条，失败 ${data.failed} 条。`)}`;
+          if (data.failures && data.failures.length) {
+            okHtml += `<pre>${escapeHtml(JSON.stringify(data.failures, null, 2))}</pre>`;
+          }
+          await refreshImportListFromCurrentPanel(wrap);
+          const noticeAfter = wrap.querySelector("#importListBackfillNotice");
+          if (noticeAfter) {
+            noticeAfter.className = okClass;
+            noticeAfter.innerHTML = okHtml;
+          }
+        } catch (err) {
+          const errH = backendUnreachableHtml(err);
+          if (notice) notice.innerHTML = errH;
+          const noticeAfter = wrap.querySelector("#importListBackfillNotice");
+          if (noticeAfter) {
+            noticeAfter.className = "alert alert--error";
+            noticeAfter.innerHTML = errH;
+          }
+        }
+      })();
+      return;
+    }
+    const qbtn = e.target.closest("#importListQueryBtn");
+    if (qbtn) {
+      const from = wrap.querySelector("#importListDateFrom")?.value || "";
+      const to = wrap.querySelector("#importListDateTo")?.value || "";
+      if (!from || !to) {
+        const tw = wrap.querySelector("#importListTableWrap");
+        if (tw) tw.innerHTML = `<div class="alert alert--muted">请填写排线日期起、止。</div>`;
+        return;
+      }
+      if (from > to) {
+        const tw = wrap.querySelector("#importListTableWrap");
+        if (tw) tw.innerHTML = `<div class="alert alert--error">日期起不能晚于日期止。</div>`;
+        return;
+      }
+      const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+      const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+      void syncImportListPanel(wrap, {
+        datasetType,
+        page: 1,
+        pageSize,
+        queryMode: "range",
+        dateFrom: from,
+        dateTo: to,
+      });
+      return;
+    }
+    const prev = e.target.closest("#importListPrev");
+    const next = e.target.closest("#importListNext");
+    if (!prev && !next) return;
+    const panel = wrap.querySelector("#importListPanel");
+    if (!panel) return;
+    const pageSize = Number(wrap.querySelector("#importListPageSize")?.value) || 20;
+    let page = Number(panel.dataset.page) || 1;
+    const total = Number(panel.dataset.total) || 0;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+    const datasetType = wrap.querySelector("#importListSource")?.value || "system";
+    const mode = panel.getAttribute("data-query-mode") === "range" ? "range" : "batch";
+    const dateFrom = panel.dataset.dateFrom ?? "";
+    const dateTo = panel.dataset.dateTo ?? "";
+    if (prev && page > 1) {
+      if (mode === "range" && dateFrom && dateTo) {
+        void syncImportListPanel(wrap, {
+          datasetType,
+          page: page - 1,
+          pageSize,
+          queryMode: "range",
+          dateFrom,
+          dateTo,
+        });
+      } else {
+        void syncImportListPanel(wrap, { datasetType, page: page - 1, pageSize, queryMode: "batch" });
+      }
+    } else if (next && page < totalPages) {
+      if (mode === "range" && dateFrom && dateTo) {
+        void syncImportListPanel(wrap, {
+          datasetType,
+          page: page + 1,
+          pageSize,
+          queryMode: "range",
+          dateFrom,
+          dateTo,
+        });
+      } else {
+        void syncImportListPanel(wrap, { datasetType, page: page + 1, pageSize, queryMode: "batch" });
+      }
+    }
+  });
+}
+
+async function restoreImportListPanelIfStored(wrap) {
+  const ids = getLastBatchIds();
+  if (!ids.system && !ids.manual) return;
+  let viewType = getImportListViewType();
+  if (!ids[viewType]) viewType = ids.system ? "system" : "manual";
+  const pageSize = 20;
+  wrap.insertAdjacentHTML(
+    "beforeend",
+    buildImportListPanelHtml({
+      selectedDatasetType: viewType,
+      page: 1,
+      pageSize,
+      payload: { items: [], total: 0 },
+      queryMode: "batch",
+      dateFrom: "",
+      dateTo: "",
+    })
+  );
+  await syncImportListPanel(wrap, { datasetType: viewType, page: 1, pageSize, queryMode: "batch" });
 }
 
 async function refreshApiStatusBanner() {
@@ -240,6 +718,9 @@ function renderImport() {
     </div>
     <div id="importRespWrap"></div>
   `;
+  const importRespWrap = document.getElementById("importRespWrap");
+  bindImportListInteractions(importRespWrap);
+  void restoreImportListPanelIfStored(importRespWrap).catch(() => {});
   document.getElementById("exportTemplateBtn").onclick = async () => {
     const wrap = document.getElementById("importRespWrap");
     const datasetType = document.getElementById("datasetType").value;
@@ -294,18 +775,19 @@ function renderImport() {
       const batchId = data.batch_id;
       const successRows = Number(data.success_rows) || 0;
       if (batchId && successRows > 0) {
+        setLastBatchId(datasetType, batchId);
+        setImportListViewType(datasetType);
         try {
-          const rowsUrl = `${API_BASE}/import/rows?dataset_type=${encodeURIComponent(
-            datasetType
-          )}&batch_id=${encodeURIComponent(batchId)}`;
-          const r2 = await fetch(rowsUrl);
-          if (r2.ok) {
-            const rows = await r2.json();
-            const label = datasetType === "system" ? "系统建议数据" : "手动排线数据";
-            html += renderImportListTable(Array.isArray(rows) ? rows : [], label);
-          } else {
-            html += `<div class="alert alert--error">无法加载本批明细（HTTP ${r2.status}）</div>`;
-          }
+          const payload = await fetchImportBatchPage(datasetType, batchId, 1, 20);
+          html += buildImportListPanelHtml({
+            selectedDatasetType: datasetType,
+            page: 1,
+            pageSize: 20,
+            payload,
+            queryMode: "batch",
+            dateFrom: "",
+            dateTo: "",
+          });
         } catch (e2) {
           html += backendUnreachableHtml(e2);
         }

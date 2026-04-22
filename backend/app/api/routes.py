@@ -13,18 +13,18 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.entities import CompareRunLog
-from app.schemas.requests import CompareRequest
+from app.schemas.requests import CompareRequest, ManualBackfillRequest
 from app.services.compare_service import overview, run_compare
-from app.services.gaode_service import backfill_manual_routes
-from app.services.import_service import build_import_template_xlsx, fetch_import_batch_rows, import_excel
+from app.services.gaode_service import backfill_manual_routes, backfill_manual_routes_by_batch
+from app.services.import_service import build_import_template_xlsx, import_excel
 from app.services.result_service import export_results_csv, fetch_results
 from app.services.route_map_service import build_route_map_payload
 
 router = APIRouter()
 
 
-# 路径不可使用 /import/template：旧版仅注册 POST /import/{dataset_type} 时，GET 会误匹配为
-# dataset_type=template 并返回 405。独立路径避免与动态段冲突。
+# 路径不可使用 /import/template 或 /import/rows：POST /import/{dataset_type} 会先匹配
+# dataset_type=template|rows，GET 则 405。独立路径避免与动态段冲突（同 import-template）。
 @router.get("/import-template")
 def download_import_template(dataset_type: str = Query(..., description="system | manual")):
     if dataset_type not in {"system", "manual"}:
@@ -42,18 +42,7 @@ def download_import_template(dataset_type: str = Query(..., description="system 
     )
 
 
-@router.get("/import/rows")
-def get_import_rows(
-    dataset_type: str = Query(..., description="system | manual"),
-    batch_id: str = Query(..., description="导入接口返回的 batch_id"),
-    db: Session = Depends(get_db),
-):
-    if dataset_type not in {"system", "manual"}:
-        raise HTTPException(status_code=400, detail="dataset_type must be system or manual")
-    try:
-        return fetch_import_batch_rows(db, dataset_type, batch_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+# 本批行查询 GET /api/import-batch 在 app/main.py 注册（与 /health 同应用，拉模板仍在 routes 的 import-template，策略一致，避免重复）
 
 
 @router.post("/import/{dataset_type}")
@@ -79,6 +68,17 @@ async def import_data(
     finally:
         os.remove(tmp_path)
     return result
+
+
+@router.post("/manual/backfill")
+def manual_backfill_routes(req: ManualBackfillRequest, db: Session = Depends(get_db)):
+    bid = (req.batch_id or "").strip()
+    if not bid:
+        raise HTTPException(status_code=400, detail="batch_id required")
+    try:
+        return backfill_manual_routes_by_batch(db, bid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/compare/run")

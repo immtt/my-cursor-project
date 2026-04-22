@@ -22,6 +22,9 @@ coverage/
 .idea/
 .vscode/
 
+# Local database files (dev SQLite, etc.)
+*.db
+
 # Python
 __pycache__/
 *.pyc
