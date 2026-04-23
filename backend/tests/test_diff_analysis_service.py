@@ -3,7 +3,7 @@ from typing import Optional
 
 import pytest
 
-from app.models.entities import ManualRoute, SysSuggest
+from app.models.entities import ManualRoute, StorePairDistance, SysSuggest
 from app.services.diff_analysis_service import (
     list_multi_vehicle_stores,
     store_diff_summary,
@@ -117,6 +117,87 @@ def test_waybill_store_load_by_vehicle_type_distribution_and_avg(db_session):
     assert t["store_count_distribution"] == {"1": 2, "2": 3, "3": 5}
     assert t["avg_store_count"] == 2.3
     assert "dataset_type" not in t
+
+
+def test_waybill_distance_layers_and_manual_unset(db_session):
+    """运单距离分层：km 分档 + 手工 est_distance 为空时计入 manual_unset。"""
+    d = date(2026, 10, 15)
+
+    def _sys(wb: str, km: float) -> SysSuggest:
+        return SysSuggest(
+            route_date=d,
+            waybill_no=wb,
+            route_line="L",
+            warehouse_name="W1",
+            stores="X",
+            vehicle_type="4.2米",
+            volume=1.0,
+            load_rate=50.0,
+            est_distance=km,
+            est_duration=20,
+        )
+
+    m1 = _manual("M1", "a", d)
+    m1.est_distance = 10.0
+    m2 = _manual("M2", "b", d)
+    m2.est_distance = None
+    m3 = _manual("M3", "c", d)
+    m3.est_distance = 75.0
+    m4 = _manual("M4", "d", d)
+    m4.est_distance = 200.0
+    db_session.add(_sys("S1", 20.0))
+    db_session.add(_sys("S2", 55.0))
+    db_session.add(_sys("S3", 100.0))
+    db_session.add(_sys("S4", 99.5))
+    db_session.add_all([m1, m2, m3, m4])
+    db_session.commit()
+    lay = {x["layer_key"]: x for x in list_multi_vehicle_stores(db_session, d, d, "all")["waybill_distance_layers"]}
+    assert lay["0_50"]["system_count"] == 1
+    assert lay["0_50"]["manual_count"] == 1
+    assert lay["0_50"]["diff"] == 0
+    assert lay["50_70"]["system_count"] == 1
+    assert lay["50_70"]["manual_count"] == 0
+    assert lay["70_80"]["system_count"] == 0
+    assert lay["70_80"]["manual_count"] == 1
+    assert lay["80_100"]["system_count"] == 1
+    assert lay["80_100"]["manual_count"] == 0
+    assert lay["100_inf"]["system_count"] == 1
+    assert lay["100_inf"]["manual_count"] == 1
+    assert lay["manual_unset"]["system_count"] == 0
+    assert lay["manual_unset"]["manual_count"] == 1
+    assert lay["manual_unset"]["diff"] == -1
+    for lk, row in lay.items():
+        assert row.get("manual_with_inter_store_over_35km", -1) == 0
+        assert row.get("ratio_manual_with_inter_store_over_35km_in_manual", -1.0) == 0.0
+
+
+def test_waybill_distance_layers_inter_store_over_35km(db_session):
+    """手工多店：店间表一段 >35 km 时计入该 est_distance 档的 long 计数。"""
+    d = date(2026, 11, 1)
+    db_session.add(StorePairDistance(store_from="近A", store_to="近B", distance_km=30.0))
+    db_session.add(StorePairDistance(store_from="远A", store_to="远B", distance_km=40.0))
+    m_short = _manual("MS", "近A,近B", d)
+    m_short.est_distance = 25.0
+    m_long = _manual("ML", "远A,远B", d)
+    m_long.est_distance = 30.0
+    m_unset = _manual("MU", "远A,远B", d)
+    m_unset.est_distance = None
+    m_one = _manual("M1", "单店", d)
+    m_one.est_distance = 10.0
+    db_session.add_all([m_short, m_long, m_unset, m_one])
+    db_session.commit()
+    lay = {
+        x["layer_key"]: x
+        for x in list_multi_vehicle_stores(db_session, d, d, "all")["waybill_distance_layers"]
+    }
+    z = lay["0_50"]
+    assert z["manual_count"] == 3
+    assert z["manual_with_inter_store_over_35km"] == 1
+    assert abs(z["ratio_manual_with_inter_store_over_35km_in_manual"] - 1.0 / 3.0) < 1e-9
+    u = lay["manual_unset"]
+    assert u["manual_count"] == 1
+    assert u["manual_with_inter_store_over_35km"] == 1
+    assert u["ratio_manual_with_inter_store_over_35km_in_manual"] == 1.0
 
 
 def test_store_diff_only_sides_and_symmetric_equal(db_session):

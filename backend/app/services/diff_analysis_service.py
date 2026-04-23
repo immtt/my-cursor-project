@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.entities import ManualRoute, SysSuggest
+from app.services.gaode_service import manual_route_has_inter_store_leg_over
 from app.utils.store_match import normalize_stores
 
 _WbT = Tuple[str, str]  # (waybill_no, "system" | "manual")
@@ -513,6 +514,155 @@ def waybill_store_load(
     }
 
 
+# 运单预计里程分档（km，左闭右开；最后一档 [100, +∞)）——与 diff 分析「车辆」筛选一致
+_WAYBILL_DIST_LAYER_SPECS: List[Dict[str, Any]] = [
+    {
+        "layer_key": "0_50",
+        "label": "0–50 km",
+        "min_km": 0.0,
+        "max_km": 50.0,
+    },
+    {
+        "layer_key": "50_70",
+        "label": "50–70 km",
+        "min_km": 50.0,
+        "max_km": 70.0,
+    },
+    {
+        "layer_key": "70_80",
+        "label": "70–80 km",
+        "min_km": 70.0,
+        "max_km": 80.0,
+    },
+    {
+        "layer_key": "80_100",
+        "label": "80–100 km",
+        "min_km": 80.0,
+        "max_km": 100.0,
+    },
+    {
+        "layer_key": "100_inf",
+        "label": "100 km 及以上",
+        "min_km": 100.0,
+        "max_km": None,
+    },
+]
+_MANUAL_UNSET_KEY = "manual_unset"
+_MANUAL_UNSET_LABEL = "里程未填/待补算（仅手工）"
+
+
+def _km_to_distance_layer_key(km: float) -> str:
+    if km < 0:
+        km = 0.0
+    for spec in _WAYBILL_DIST_LAYER_SPECS:
+        lo = float(spec["min_km"])
+        hi = spec["max_km"]
+        if hi is None:
+            if km >= lo:
+                return str(spec["layer_key"])
+        elif lo <= km < float(hi):
+            return str(spec["layer_key"])
+    return "100_inf"
+
+
+def waybill_distance_layers(
+    db: Session,
+    route_date_from: date,
+    route_date_to: date,
+    warehouse_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    在闭区间日期与可选仓库下，对有效运单按 `est_distance` 分档统计系统/手工运单数。
+    与 vehicle_diff 同范围；不随一店多车 dataset_type 变。
+    手工行 `est_distance` 为 NULL 时仅计入「里程未填」层。
+    每档另计「手工运单在途经顺序上存在店间段 >35 km」的条数（与整单 est_distance
+    分档正交，见 `manual_with_inter_store_over_35km`）。
+    """
+    wh = (warehouse_name or "").strip() or None
+    counts: Dict[str, List[int]] = {}
+    for spec in _WAYBILL_DIST_LAYER_SPECS:
+        counts[str(spec["layer_key"])] = [0, 0]
+    counts[_MANUAL_UNSET_KEY] = [0, 0]
+    manual_inter_over_35: Dict[str, int] = {str(s["layer_key"]): 0 for s in _WAYBILL_DIST_LAYER_SPECS}
+    manual_inter_over_35[_MANUAL_UNSET_KEY] = 0
+
+    q_sys = db.query(SysSuggest).filter(
+        SysSuggest.is_active == 1,
+        SysSuggest.route_date >= route_date_from,
+        SysSuggest.route_date <= route_date_to,
+    )
+    if wh:
+        q_sys = q_sys.filter(SysSuggest.warehouse_name == wh)
+    for row in q_sys.all():
+        try:
+            km = float(row.est_distance)
+        except (TypeError, ValueError):
+            km = 0.0
+        key = _km_to_distance_layer_key(km)
+        if key not in counts:
+            key = "100_inf"
+        counts[key][0] += 1
+
+    q_man = db.query(ManualRoute).filter(
+        ManualRoute.is_active == 1,
+        ManualRoute.route_date >= route_date_from,
+        ManualRoute.route_date <= route_date_to,
+    )
+    if wh:
+        q_man = q_man.filter(ManualRoute.warehouse_name == wh)
+    for row in q_man.all():
+        d = row.est_distance
+        if d is None:
+            key = _MANUAL_UNSET_KEY
+            counts[key][1] += 1
+        else:
+            try:
+                km = float(d)
+            except (TypeError, ValueError):
+                km = 0.0
+            key = _km_to_distance_layer_key(km)
+            if key not in counts:
+                key = "100_inf"
+            counts[key][1] += 1
+        if manual_route_has_inter_store_leg_over(db, row, 35.0):
+            manual_inter_over_35[key] = manual_inter_over_35.get(key, 0) + 1
+
+    out: List[Dict[str, Any]] = []
+    for spec in _WAYBILL_DIST_LAYER_SPECS:
+        lk = str(spec["layer_key"])
+        sc, mc = counts.get(lk, [0, 0])
+        m_long = int(manual_inter_over_35.get(lk, 0))
+        out.append(
+            {
+                "layer_key": lk,
+                "label": str(spec["label"]),
+                "min_km": spec["min_km"],
+                "max_km": spec["max_km"],
+                "system_count": sc,
+                "manual_count": mc,
+                "diff": sc - mc,
+                "manual_with_inter_store_over_35km": m_long,
+                "ratio_manual_with_inter_store_over_35km_in_manual": (m_long / mc) if mc else 0.0,
+            }
+        )
+    sc, mc = counts.get(_MANUAL_UNSET_KEY, [0, 0])
+    m_long_u = int(manual_inter_over_35.get(_MANUAL_UNSET_KEY, 0))
+    out.append(
+        {
+            "layer_key": _MANUAL_UNSET_KEY,
+            "label": _MANUAL_UNSET_LABEL,
+            "min_km": None,
+            "max_km": None,
+            "system_count": sc,
+            "manual_count": mc,
+            "diff": sc - mc,
+            "manual_with_inter_store_over_35km": m_long_u,
+            "ratio_manual_with_inter_store_over_35km_in_manual": (m_long_u / mc) if mc else 0.0,
+        }
+    )
+    return out
+
+
 def list_multi_vehicle_stores(
     db: Session,
     route_date_from: date,
@@ -549,11 +699,15 @@ def list_multi_vehicle_stores(
     wb_load = waybill_store_load(
         db, route_date_from, route_date_to, dataset_type, wh
     )
+    waybill_distance_layers_ = waybill_distance_layers(
+        db, route_date_from, route_date_to, wh
+    )
     return {
         "items": all_items,
         "trend_by_day": trend_by_day,
         "vehicle_store_trend_by_day": vehicle_store_trend_by_day,
         "waybill_store_load": wb_load,
+        "waybill_distance_layers": waybill_distance_layers_,
         "warehouse_options": warehouse_options,
         "vehicle_diff": vehicle_diff,
         "store_diff": store_diff,

@@ -718,6 +718,42 @@ def manual_store_visit_sequence(stores_csv: str, delivery_store_order_json: Opti
     return ordered
 
 
+def pair_leg_km_resolved(db: Session, store_a: str, store_b: str) -> Optional[float]:
+    """
+    单段店间 km：优先 `store_pair_distance`（与 `estimate_route` 店间段一致），
+    无表则用两店坐标球面距（`get_or_create_coord`）。
+    """
+    d = pair_km_from_store_pair_table(db, store_a, store_b)
+    if d is not None and d >= 0:
+        return float(d)
+    a = (store_a or "").strip()
+    b = (store_b or "").strip()
+    if not a or not b:
+        return None
+    if a == b:
+        return 0.0
+    try:
+        la = get_or_create_coord(db, a, "store")
+        lb = get_or_create_coord(db, b, "store")
+        return _haversine_km(la[0], la[1], lb[0], lb[1])
+    except (TypeError, ValueError, AttributeError, KeyError):
+        return None
+
+
+def manual_route_has_inter_store_leg_over(
+    db: Session, row: ManualRoute, threshold_km: float = 35.0
+) -> bool:
+    """手工运单是否存在相邻门店间距离严格大于 threshold_km（km）的段。"""
+    visit = manual_store_visit_sequence(row.stores, row.delivery_store_order)
+    if len(visit) < 2:
+        return False
+    for i in range(len(visit) - 1):
+        leg = pair_leg_km_resolved(db, visit[i], visit[i + 1])
+        if leg is not None and leg > threshold_km:
+            return True
+    return False
+
+
 def build_markers(
     warehouse: str,
     stores_csv: str,

@@ -212,6 +212,7 @@
     - `summary`：`waybill_count`（条数）、`avg_store_count`（全样本平均配载门店数）；`system_waybill_count` / `system_avg_store_count` / `manual_waybill_count` / `manual_avg_store_count`（各侧条数与单均，单侧无数据时为 0）。
     - `by_vehicle_type`：在筛选区间内**按车型**（选「全部」时再多一层 `dataset_type`：系统/手工不混加）的汇总。每项含 `vehicle_type`、`waybill_count`、**`store_count_distribution`**（键为配载店数字符串 `\"1\"` `\"2\"`…，值为该档运单数）、`avg_store_count`（该车型在区间内的**单均配载去重店数**）。选 `dataset_type=all` 时多字段 **`dataset_type`**（`system` | `manual`）；单侧筛选时无 `dataset_type` 字段。
     - `items`：逐单明细（`route_date`、`waybill_no`、`dataset_type`、`vehicle_type`、`store_count` 等），**产品前端不展示**该列表，仅使用 `summary` 与 `by_vehicle_type`；保留字段供其它消费方或排障拉取。
+  - **`waybill_distance_layers`**：按**预计里程** `est_distance`（km）对运单**分档**统计系统 / 手工运单数，与 `vehicle_diff` 同**日期区间与仓库**、与 **`dataset_type` 无关**（始终两侧都统计）。分档为左闭右开：`[0,50)`、`[50,70)`、`[70,80)`、`[80,100)`，以及 `[100, +∞)`；**手工**行 `est_distance` 为 `NULL` 时计入 **`layer_key: manual_unset`**（`system_count` 恒为 0）。每项含 `label`、`min_km` / `max_km`（未填层为 `null`）、`system_count`、`manual_count`、`diff`（系统 − 手工）。另含与整单里程**正交**的手工店间指标（不替代 `est_distance` 语义）：**`manual_with_inter_store_over_35km`** — 该档内手工运单中，在 `manual_store_visit_sequence` 相邻店对之间，按 `store_pair_distance` 优先、否则两店坐标球面距，存在任一段 **>35 km** 的运单条数；**`ratio_manual_with_inter_store_over_35km_in_manual`** — 上项 ÷ 本档 `manual_count`（分母为 0 时为 `0`）。
 
 ```json
 {
@@ -289,7 +290,31 @@
         "store_count": 3
       }
     ]
-  }
+  },
+  "waybill_distance_layers": [
+    {
+      "layer_key": "0_50",
+      "label": "0–50 km",
+      "min_km": 0,
+      "max_km": 50,
+      "system_count": 12,
+      "manual_count": 10,
+      "diff": 2,
+      "manual_with_inter_store_over_35km": 1,
+      "ratio_manual_with_inter_store_over_35km_in_manual": 0.1
+    },
+    {
+      "layer_key": "manual_unset",
+      "label": "里程未填/待补算（仅手工）",
+      "min_km": null,
+      "max_km": null,
+      "system_count": 0,
+      "manual_count": 3,
+      "diff": -3,
+      "manual_with_inter_store_over_35km": 0,
+      "ratio_manual_with_inter_store_over_35km_in_manual": 0
+    }
+  ]
 }
 ```
 

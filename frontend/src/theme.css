@@ -1359,6 +1359,80 @@ a.btn--primary:visited {
   display: none !important;
 }
 
+/* 差异分析 · 运单距离分层 */
+.diff-analysis-distance-block {
+  margin: 20px 0;
+  padding: 16px 18px 18px;
+  background: #f9fafb;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.diff-analysis-distance-block[hidden] {
+  display: none !important;
+}
+
+.diff-distance-crosshint {
+  margin: 0 0 12px;
+  max-width: 52rem;
+  line-height: 1.5;
+  font-size: 0.88rem;
+}
+
+/* 不随整卡拉满过宽；与上方说明同宽，列宽用固定比例避免数字与表头脱节 */
+.table-scroll--diff-distance {
+  max-width: 52rem;
+  width: 100%;
+  max-height: min(20rem, 50vh);
+  overflow-x: auto;
+}
+
+.data-table--diff-distance {
+  table-layout: fixed;
+  width: 100%;
+  max-width: 52rem;
+}
+
+.data-table--diff-distance .td-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 表头可换行，避免单格 nowrap 把列撑到极宽 */
+.data-table--diff-distance thead th {
+  white-space: normal;
+  line-height: 1.35;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 8px 8px 10px;
+  vertical-align: bottom;
+  hyphens: none;
+}
+
+.data-table--diff-distance tbody td {
+  padding: 8px 8px 9px;
+  vertical-align: middle;
+  font-size: 0.85rem;
+}
+
+/* 第 1 列：分层标签 */
+.data-table--diff-distance th:first-child,
+.data-table--diff-distance td:first-child {
+  width: 30%;
+  text-align: left;
+  word-break: break-word;
+  padding-right: 10px;
+}
+
+/* 后 5 列：短数字/百分比，与表头同右对齐、列收紧 */
+.data-table--diff-distance th:nth-child(n + 2),
+.data-table--diff-distance td.td-num {
+  width: 14%;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .diff-wbload-summary {
   margin: 0 0 12px;
   line-height: 1.55;

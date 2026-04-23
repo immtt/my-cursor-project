@@ -1359,6 +1359,55 @@ function renderDiffAnalysisTrendChart(host, series) {
   </svg>`;
 }
 
+/**
+ * 运单预计里程分档：系统/手工运单数对比（与「车辆差异」同区间/仓库、不受数据范围影响）。
+ * @param {Array<{ label?: string, layer_key?: string, system_count?: number, manual_count?: number, diff?: number, manual_with_inter_store_over_35km?: number, ratio_manual_with_inter_store_over_35km_in_manual?: number }>} layers
+ * @param {object|undefined} vehicleDiff 用于与合计交叉核对
+ */
+function renderDiffAnalysisDistanceLayersInner(layers, vehicleDiff) {
+  const list = Array.isArray(layers) ? layers : [];
+  const vd = vehicleDiff && typeof vehicleDiff === "object" ? vehicleDiff : {};
+  const st = Number(vd.system_total) || 0;
+  const mt = Number(vd.manual_total) || 0;
+  if (list.length === 0) {
+    return `<p class="empty-hint">暂无分档数据。</p>
+      <p class="empty-hint" style="margin-top:8px">与「车辆差异」合计可核对：系统 <strong>${st}</strong> 单、手工 <strong>${mt}</strong> 单。</p>`;
+  }
+  const body = list
+    .map((row) => {
+      const label = escapeHtml(String(row.label || row.layer_key || "—"));
+      const sc = String(Number(row.system_count) || 0);
+      const mc = String(Number(row.manual_count) || 0);
+      const mLong = String(Number(row.manual_with_inter_store_over_35km) || 0);
+      const rLong = row.ratio_manual_with_inter_store_over_35km_in_manual;
+      const rLongStr =
+        rLong != null && rLong !== "" && Number.isFinite(Number(rLong))
+          ? `${(Number(rLong) * 100).toFixed(1)}%`
+          : "—";
+      const dRaw = row.diff;
+      const d =
+        dRaw != null && dRaw !== "" && Number.isFinite(Number(dRaw))
+          ? String(Number(dRaw))
+          : String((Number(row.system_count) || 0) - (Number(row.manual_count) || 0));
+      return `<tr>
+        <td>${label}</td>
+        <td class="td-num">${sc}</td>
+        <td class="td-num">${mc}</td>
+        <td class="td-num">${d}</td>
+        <td class="td-num">${mLong}</td>
+        <td class="td-num">${rLongStr}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<p class="diff-distance-crosshint empty-hint">各档运单数之和应与「车辆差异」合计一致：系统 <strong>${st}</strong> 单、手工 <strong>${mt}</strong> 单。手工 <strong>est_distance</strong> 为空时计入最末行。「手工·长店间段」按途经店序相邻店对距离 >35 km 计数（与整单 est_distance 分档独立）。</p>
+  <div class="table-scroll table-scroll--diff-distance">
+  <table class="data-table data-table--diff-distance" aria-label="运单距离分层">
+    <thead><tr><th>里程分层</th><th>系统运单数</th><th>手工运单数</th><th>差异（系统−手工）</th><th>手工·>35 km 店间段</th><th>占本档手工比</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  </div>`;
+}
+
 function renderDiffAnalysisVehicleDiffInner(vd) {
   if (!vd || typeof vd !== "object") {
     return '<p class="empty-hint">无法加载车辆差异。</p>';
@@ -1479,6 +1528,11 @@ function renderDiffAnalysis() {
       <p class="empty-hint diff-analysis-chart-block__sub">在<strong>排线起止、仓库、数据范围</strong>下给出<strong>全样本单均</strong>与<strong>按车型</strong>的配载店数分布（不展示按运单逐行列表）。<strong>配载门店数</strong> = 拼载门店经去重后的店名个数。与一店多车表<strong>无依赖</strong>。</p>
       <div id="diffAnalysisWaybillLoadInner"></div>
     </div>
+    <div id="diffAnalysisDistanceLayersBlock" class="diff-analysis-distance-block" hidden>
+      <h3 class="diff-analysis-chart-block__title">运单距离分层（系统 vs 手工）</h3>
+      <p class="empty-hint diff-analysis-chart-block__sub">在<strong>排线起止、仓库</strong>下按 <code>est_distance</code>（预计里程 km）分档累加各侧运单数；<strong>不受</strong>「数据范围」影响，与「车辆差异」同筛选。末行含手工未填里程。</p>
+      <div id="diffAnalysisDistanceLayersInner"></div>
+    </div>
     <div id="diffAnalysisChartBlock" class="diff-analysis-chart-block" hidden>
       <h3 class="diff-analysis-chart-block__title">一店多车 · 按日趋势（门店数）</h3>
       <p class="empty-hint diff-analysis-chart-block__sub">与上方筛选条件一致；每日<strong>两根柱</strong>：蓝=系统侧多车店数，橙=手工侧。纵轴为当日满足一店多车的<strong>门店个数</strong>。</p>
@@ -1534,12 +1588,14 @@ function renderDiffAnalysis() {
     const vehicleBlock = document.getElementById("diffAnalysisVehicleBlock");
     const storeBlock = document.getElementById("diffAnalysisStoreBlock");
     const waybillBlock = document.getElementById("diffAnalysisWaybillLoadBlock");
+    const distanceBlock = document.getElementById("diffAnalysisDistanceLayersBlock");
     if (!routeDateFrom || !routeDateTo) {
       tbody.innerHTML = "";
       if (chartBlock) chartBlock.setAttribute("hidden", "");
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
       if (storeBlock) storeBlock.setAttribute("hidden", "");
       if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      if (distanceBlock) distanceBlock.setAttribute("hidden", "");
       _diffAnalysisStoreListSnapshot = null;
       emptyEl.removeAttribute("hidden");
       emptyEl.textContent = "请填写排线起止日期。";
@@ -1551,6 +1607,7 @@ function renderDiffAnalysis() {
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
       if (storeBlock) storeBlock.setAttribute("hidden", "");
       if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      if (distanceBlock) distanceBlock.setAttribute("hidden", "");
       _diffAnalysisStoreListSnapshot = null;
       emptyEl.removeAttribute("hidden");
       emptyEl.textContent = "排线起不能晚于排线止。";
@@ -1562,6 +1619,7 @@ function renderDiffAnalysis() {
     if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
     if (storeBlock) storeBlock.setAttribute("hidden", "");
     if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+    if (distanceBlock) distanceBlock.setAttribute("hidden", "");
     _diffAnalysisStoreListSnapshot = null;
     const q = new URLSearchParams({
       route_date_from: routeDateFrom,
@@ -1582,6 +1640,7 @@ function renderDiffAnalysis() {
         if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
         if (storeBlock) storeBlock.setAttribute("hidden", "");
         if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+        if (distanceBlock) distanceBlock.setAttribute("hidden", "");
         _diffAnalysisStoreListSnapshot = null;
         const detail =
           typeof data.detail === "string"
@@ -1614,6 +1673,14 @@ function renderDiffAnalysis() {
             : { summary: {}, by_vehicle_type: [] };
         wbInner.innerHTML = renderDiffAnalysisWaybillLoadInner(wsl, datasetType);
         waybillBlock.removeAttribute("hidden");
+      }
+      const dInner = document.getElementById("diffAnalysisDistanceLayersInner");
+      if (distanceBlock && dInner) {
+        dInner.innerHTML = renderDiffAnalysisDistanceLayersInner(
+          data.waybill_distance_layers,
+          data.vehicle_diff,
+        );
+        distanceBlock.removeAttribute("hidden");
       }
       const whSel = document.getElementById("diffAnalysisWarehouse");
       const wOpts = Array.isArray(data.warehouse_options) ? data.warehouse_options : [];
@@ -1696,6 +1763,7 @@ function renderDiffAnalysis() {
       if (vehicleBlock) vehicleBlock.setAttribute("hidden", "");
       if (storeBlock) storeBlock.setAttribute("hidden", "");
       if (waybillBlock) waybillBlock.setAttribute("hidden", "");
+      if (distanceBlock) distanceBlock.setAttribute("hidden", "");
       _diffAnalysisStoreListSnapshot = null;
       tbody.innerHTML = `<tr><td colspan="${colSpan}">${backendUnreachableHtml(e)}</td></tr>`;
     }
