@@ -145,6 +145,26 @@ def _amap_place_text_lnglat(keywords: str) -> Optional[Tuple[float, float]]:
     return float(a), float(b)
 
 
+def geocode_address_to_coordinate_raw(address: str) -> Optional[str]:
+    """
+    用仓库地址做地理编码，得到可写入 `warehouse_base.coordinate_raw` 的 `经度,纬度` 字符串。
+    当配置了 AMAP_KEY 且未开启 GAODE_MOCK 时走高德 Web 服务；否则与排线一致走本地模拟算法。
+    """
+    a = (address or "").strip()
+    if not a:
+        return None
+    if amap_rest_enabled():
+        ll = _amap_geocode_lnglat(a)
+        if not ll:
+            ll = _amap_place_text_lnglat(a)
+        if not ll:
+            return None
+    else:
+        ll = _mock_geocode(a)
+    lng, lat = ll
+    return f"{round(float(lng), 6)},{round(float(lat), 6)}"
+
+
 def sync_resolved_lnglat_to_cache_tables(
     db: Session, label: str, kind: str, lng: float, lat: float
 ) -> None:

@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -18,6 +19,8 @@ from app.schemas.requests import (
     CustomerProfileCreate,
     CustomerProfileUpdate,
     ManualBackfillRequest,
+    WarehouseBaseCreate,
+    WarehouseBaseUpdate,
     StoreCoordinateCreate,
     StoreCoordinateUpdate,
     StorePairDistanceCreate,
@@ -41,6 +44,19 @@ from app.services.customer_profile_service import (
     get_customer_profile,
     list_customer_profiles,
     update_customer_profile,
+)
+from app.services.warehouse_base_service import (
+    batch_supplement_warehouse_base_coordinates,
+    build_warehouse_base_export_xlsx_bytes,
+    business_brand_to_item,
+    create_warehouse_base,
+    delete_warehouse_base,
+    get_warehouse_base,
+    import_warehouse_workbook,
+    list_warehouse_base_filter_options,
+    list_warehouse_bases,
+    update_warehouse_base,
+    warehouse_base_to_item,
 )
 from app.services.store_distance_excel import build_export_xlsx_bytes, import_workbook_path
 from app.services.store_master_service import (
@@ -151,6 +167,206 @@ def api_delete_customer_profile(row_id: int, db: Session = Depends(get_db)):
     if not delete_customer_profile(db, row_id):
         raise HTTPException(status_code=404, detail="NOT_FOUND")
     return {"ok": True}
+
+
+# ---------- 仓库基础数据（仓网规划 / 与「仓管理」Excel 对齐 + 集团） ----------
+
+
+@router.post("/warehouse-base/import")
+async def api_warehouse_base_import(
+    file: UploadFile = File(...),
+    data_source: str = Query("仓管理导入", description="来源标记，写入 import_source"),
+    db: Session = Depends(get_db),
+):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    try:
+        try:
+            return import_warehouse_workbook(
+                db, tmp_path, import_source=(data_source or "仓管理导入").strip() or "仓管理导入"
+            )
+        except BadZipFile as e:
+            raise HTTPException(status_code=400, detail="请上传有效的 .xlsx 文件") from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    finally:
+        os.remove(tmp_path)
+
+
+@router.get("/warehouse-base/filter-options")
+def api_warehouse_base_filter_options(db: Session = Depends(get_db)):
+    return list_warehouse_base_filter_options(db)
+
+
+@router.get("/warehouse-base/export")
+def api_warehouse_base_export(
+    warehouse: str = Query("", description="筛：仓库代码或名称，模糊（子串）"),
+    group_name: str = Query("", description="筛：集团，精确"),
+    owning_org: str = Query("", description="筛：所属组织，精确"),
+    brand: str = Query("", description="筛：品牌，精确"),
+    status: str = Query("", description="筛：状态，精确"),
+    warehouse_type: str = Query("", description="筛：仓库类型，精确"),
+    db: Session = Depends(get_db),
+):
+    content = build_warehouse_base_export_xlsx_bytes(
+        db,
+        warehouse=warehouse,
+        group_name=group_name,
+        owning_org=owning_org,
+        brand=brand,
+        status=status,
+        warehouse_type=warehouse_type,
+    )
+    name = "仓管理.xlsx"
+    disp = f'attachment; filename="warehouse_base.xlsx"; filename*=UTF-8\'\'{quote(name)}'
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disp},
+    )
+
+
+@router.post("/warehouse-base/batch-geocode")
+def api_batch_geocode_warehouse_base(
+    only_missing: bool = Query(
+        True,
+        description="为真时仅补全「仓库坐标」为空的行；为假时按当前地址重新解析并覆盖",
+    ),
+    warehouse: str = Query("", description="与列表同：仓库代码/名称，模糊"),
+    group_name: str = Query(""),
+    owning_org: str = Query(""),
+    brand: str = Query(""),
+    status: str = Query(""),
+    warehouse_type: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    return batch_supplement_warehouse_base_coordinates(
+        db,
+        only_missing=only_missing,
+        warehouse=warehouse,
+        group_name=group_name,
+        owning_org=owning_org,
+        brand=brand,
+        status=status,
+        warehouse_type=warehouse_type,
+    )
+
+
+@router.get("/warehouse-base")
+def api_list_warehouse_base(
+    warehouse: str = Query("", description="筛：仓库代码或名称，模糊（子串）"),
+    group_name: str = Query("", description="筛：集团，精确"),
+    owning_org: str = Query("", description="筛：所属组织，精确"),
+    brand: str = Query("", description="筛：品牌，精确"),
+    status: str = Query("", description="筛：状态，精确"),
+    warehouse_type: str = Query("", description="筛：仓库类型，精确"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    total, rows = list_warehouse_bases(
+        db,
+        skip=skip,
+        limit=limit,
+        warehouse=warehouse,
+        group_name=group_name,
+        owning_org=owning_org,
+        brand=brand,
+        status=status,
+        warehouse_type=warehouse_type,
+    )
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "items": [warehouse_base_to_item(r) for r in rows],
+    }
+
+
+@router.post("/warehouse-base")
+def api_create_warehouse_base(req: WarehouseBaseCreate, db: Session = Depends(get_db)):
+    try:
+        row = create_warehouse_base(db, req.model_dump())
+        return warehouse_base_to_item(row)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/warehouse-base/{row_id}")
+def api_get_warehouse_base(row_id: int, db: Session = Depends(get_db)):
+    row = get_warehouse_base(db, row_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return warehouse_base_to_item(row)
+
+
+@router.put("/warehouse-base/{row_id}")
+def api_update_warehouse_base(
+    row_id: int, req: WarehouseBaseUpdate, db: Session = Depends(get_db)
+):
+    try:
+        row = update_warehouse_base(db, row_id, req.model_dump(exclude_unset=True))
+        if not row:
+            raise HTTPException(status_code=404, detail="NOT_FOUND")
+        return warehouse_base_to_item(row)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.delete("/warehouse-base/{row_id}")
+def api_delete_warehouse_base(row_id: int, db: Session = Depends(get_db)):
+    if not delete_warehouse_base(db, row_id):
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return {"ok": True}
+
+
+@router.post("/warehouse-base/business-brands/{bb_id}/file")
+async def api_upload_warehouse_business_brand_logo(
+    bb_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    from app.models.entities import WarehouseBusinessBrand
+    from app.business.warehouse_brand_uploads import ensure_upload_root
+
+    bb = db.get(WarehouseBusinessBrand, bb_id)
+    if not bb:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    name = (file.filename or "").lower()
+    ext = os.path.splitext(name)[1] or ".png"
+    if ext.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"):
+        raise HTTPException(status_code=400, detail="不支持的图片类型")
+    dest_dir = ensure_upload_root()
+    rel = f"wb{bb.warehouse_id}_{bb_id}{ext}"
+    path = dest_dir / rel
+    with open(path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    bb.logo_path = rel
+    db.add(bb)
+    db.commit()
+    db.refresh(bb)
+    return business_brand_to_item(bb)
+
+
+@router.get("/warehouse-base/business-brands/{bb_id}/file")
+def api_serve_warehouse_business_brand_logo(bb_id: int, db: Session = Depends(get_db)):
+    from app.models.entities import WarehouseBusinessBrand
+    from app.business.warehouse_brand_uploads import UPLOAD_WB_BRAND, ensure_upload_root
+
+    bb = db.get(WarehouseBusinessBrand, bb_id)
+    if not bb or not (bb.logo_path or "").strip():
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    base = ensure_upload_root().resolve()
+    p = (base / bb.logo_path).resolve()
+    if not str(p).startswith(str(base)) or not p.is_file():
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    ext = p.suffix.lower()
+    media = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon"}.get(
+        ext, "application/octet-stream"
+    )
+    return FileResponse(p, media_type=media)
 
 
 @router.get("/import-template")

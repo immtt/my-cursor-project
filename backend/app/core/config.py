@@ -4,7 +4,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-_backend_root = Path(__file__).resolve().parents[2]
+backend_root = Path(__file__).resolve().parents[2]
+_backend_root = backend_root  # 兼容旧引用
 _env_file = _backend_root / ".env"
 if _env_file.is_file():
     load_dotenv(_env_file)

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.session import Base
@@ -221,3 +222,81 @@ class CustomerProfile(Base):
     import_source = Column(String(200), nullable=True, comment="最后写入来源（如导入文件名）")
     updated_at = Column(DateTime, onupdate=func.now(), comment="更新时间")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
+
+
+class WarehouseBusinessBrand(Base):
+    """单仓下的多业务品牌（与系统侧栏「品牌标识」无关）；可配置 LOGO 沿用说明与上传的图示文件。"""
+
+    __tablename__ = "warehouse_business_brand"
+
+    id = Column(Integer, primary_key=True, index=True, comment="主键")
+    warehouse_id = Column(
+        Integer,
+        ForeignKey("warehouse_base.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="仓库主数据 id",
+    )
+    name = Column(String(200), nullable=False, index=True, comment="业务品牌名称，如 万好")
+    logo_as = Column(String(200), nullable=True, comment="LOGO 沿用说明，如 好想来")
+    logo_path = Column(String(500), nullable=True, comment="本地上传图示相对路径")
+    sort_order = Column(Integer, nullable=False, default=0, comment="展示顺序")
+    created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
+
+    warehouse = relationship("WarehouseBase", back_populates="business_brands")
+
+
+class WarehouseBase(Base):
+    """仓库主数据：与「仓管理」模板列一致；业务必填为仓库名称、仓库地址、品牌、集团；仓库代码可空（由服务层校验）。"""
+
+    __tablename__ = "warehouse_base"
+    __table_args__ = (UniqueConstraint("warehouse_code", name="uq_warehouse_base_code"),)
+
+    id = Column(Integer, primary_key=True, index=True, comment="主键")
+    warehouse_code = Column(String(64), nullable=True, index=True, comment="仓库代码（可空）")
+    warehouse_name = Column(String(300), nullable=False, index=True, comment="仓库名称")
+    group_name = Column(String(200), nullable=True, index=True, comment="集团")
+    owning_org = Column(String(500), nullable=True, comment="所属组织")
+    brand = Column(
+        String(500),
+        nullable=True,
+        index=True,
+        comment="业务品牌汇总（多品牌以分号连接，与系统品牌标识无关）",
+    )
+    logistics_org = Column(String(500), nullable=True, comment="物流组织")
+    dc_store_name = Column(String(500), nullable=True, comment="配送中心门店名称")
+    warehouse_category = Column(String(200), nullable=True, comment="仓库分类")
+    temperature_layer = Column(String(100), nullable=True, comment="仓库温层")
+    manager_name = Column(String(200), nullable=True, comment="仓库负责人")
+    manager_phone = Column(String(200), nullable=True, comment="联系电话")
+    address = Column(Text, nullable=True, comment="仓库地址")
+    coordinate_raw = Column(String(500), nullable=True, comment="仓库坐标")
+    status = Column(String(200), nullable=True, comment="状态")
+    warehouse_type = Column(String(200), nullable=True, comment="仓库类型")
+    business_type = Column(String(200), nullable=True, comment="仓库经营类型")
+    property_type = Column(String(200), nullable=True, comment="仓库产权")
+    receiver_contact = Column(String(200), nullable=True, comment="收货联系人")
+    receiver_phone = Column(String(200), nullable=True, comment="收货电话")
+    area_sqm = Column(Float, nullable=True, comment="仓库面积")
+    coverage_region = Column(String(500), nullable=True, comment="覆盖门店区域")
+    zone_function = Column(String(500), nullable=True, comment="库区功能")
+    expected_store_count = Column(Float, nullable=True, comment="预计覆盖门店数")
+    monthly_covered_stores = Column(String(200), nullable=True, comment="本月真实覆盖门店数量")
+    opening_date = Column(String(100), nullable=True, comment="开仓日")
+    sku_count_text = Column(String(200), nullable=True, comment="覆盖SKU数")
+    purchase_shared_flag = Column(String(100), nullable=True, comment="是否启用采购共享仓")
+    purchase_direct_flag = Column(String(100), nullable=True, comment="是否启用采购直通")
+    is_group_order_warehouse = Column(String(100), nullable=True, comment="当前仓是否商品组下单仓")
+    remark = Column(Text, nullable=True, comment="备注")
+    applicant = Column(String(200), nullable=True, comment="申请人")
+    source_created_at = Column(String(100), nullable=True, comment="来源侧创建时间")
+    import_source = Column(String(200), nullable=True, comment="最后写入来源")
+    updated_at = Column(DateTime, onupdate=func.now(), comment="更新时间")
+    created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
+
+    business_brands = relationship(
+        "WarehouseBusinessBrand",
+        back_populates="warehouse",
+        order_by="WarehouseBusinessBrand.sort_order, WarehouseBusinessBrand.id",
+        cascade="all, delete-orphan",
+    )

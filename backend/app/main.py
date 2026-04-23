@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import router
 from app.db.import_dedupe import dedupe_import_tables_and_apply_unique
-from app.db.session import Base, engine, ensure_sqlite_schema, get_db
+from app.db.session import Base, engine, ensure_sqlite_schema, ensure_warehouse_code_nullable, get_db
 import app.models.entities  # noqa: F401  — 全量注册 ORM 表（含新表）供 create_all
 from app.middleware.dev_cors import DevCorsASGIMiddleware
 from app.services.import_service import fetch_active_import_page, fetch_import_batch_page
@@ -15,6 +15,7 @@ from app.services.import_service import fetch_active_import_page, fetch_import_b
 log = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+ensure_warehouse_code_nullable()
 ensure_sqlite_schema()
 try:
     _dedupe_stats = dedupe_import_tables_and_apply_unique(engine)

@@ -25,6 +25,9 @@ coverage/
 # Local database files (dev SQLite, etc.)
 *.db
 
+# 仓库主数据业务品牌图示上传（本机/开发用）
+uploads/warehouse_business_logos/
+
 # Python
 __pycache__/
 *.pyc

@@ -12,7 +12,14 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="主导航">
         <div class="sidebar__brand">
-          <div class="sidebar__brand-inner">
+          <div
+            class="sidebar__brand-inner"
+            role="button"
+            tabindex="0"
+            aria-haspopup="dialog"
+            aria-controls="brandIdentityModal"
+            aria-label="打开品牌定制"
+          >
             <img
               class="sidebar__brand-logo"
               src="./brand-logo.png"
@@ -54,15 +61,101 @@
               </li>
             </ul>
           </div>
+          <div class="nav-group" aria-labelledby="nav-l1-netplan">
+            <h2 id="nav-l1-netplan" class="nav-group__title">仓网规划</h2>
+            <ul class="sidebar-nav sidebar-nav--level2">
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#net-map" data-route="#net-map">仓网地图</a>
+              </li>
+              <li>
+                <a class="sidebar-nav__link nav-tab" href="#warehouse-base" data-route="#warehouse-base"
+                  >仓库基础数据</a
+                >
+              </li>
+              <li>
+                <a
+                  class="sidebar-nav__link nav-tab"
+                  href="#brand-identity"
+                  data-route="#brand-identity"
+                  >品牌标识</a
+                >
+              </li>
+            </ul>
+          </div>
         </nav>
       </aside>
       <div class="app-main">
         <div id="api-status-banner" class="api-status-banner" hidden></div>
         <header class="workspace-header">
-          <p class="workspace-header__crumb">智能排线</p>
+          <p class="workspace-header__crumb" id="workspace-l1-crumb">智能排线</p>
           <p class="workspace-header__title" id="workspace-page-title">工作台</p>
         </header>
         <main id="app" class="main-card" aria-live="polite"></main>
+      </div>
+    </div>
+    <div id="brandIdentityModal" class="modal" hidden>
+      <div class="modal__backdrop" data-brand-modal-close aria-hidden="true"></div>
+      <div
+        class="modal__dialog modal__dialog--brand"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="brandIdentityModalIntro"
+      >
+        <p id="brandIdentityModalIntro" class="brand-identity-modal__intro">
+          快速编辑 <strong>主展示</strong>（多品牌中<strong>第一行</strong>）。多行增删与排序请至侧栏 <strong>品牌标识</strong> 页。
+        </p>
+        <div class="brand-identity-block brand-identity-block--modal">
+          <p class="brand-identity-hint brand-identity-hint--modal">
+            图示规格按常见产品规则建议：<strong>512×512 px</strong> 正方形、PNG 或 WebP 为宜；单边
+            <strong>32～1024 px</strong>，单文件 <strong>≤ 1.2MB</strong>。亦支持 SVG（不校验像素尺寸）。与 iOS/Chrome
+            等使用的 App 图标、侧栏 44px 等场景相兼容的素材即可。
+          </p>
+          <div class="toolbar brand-identity-form">
+            <div class="field">
+              <span class="field-label">品牌名称</span>
+              <input
+                type="text"
+                id="brandModalNameInput"
+                maxlength="80"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="与对外展示一致"
+              />
+            </div>
+            <div class="field">
+              <span class="field-label">品牌图示</span>
+              <input
+                type="file"
+                id="brandModalLogoFile"
+                class="input-file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              />
+            </div>
+          </div>
+          <p id="brandModalMsg" class="alert" style="display: none" role="status"></p>
+          <div class="brand-identity-block__mark brand-identity-block__mark--modal">
+            <p class="empty-hint brand-identity-block__prelabel">当前预览</p>
+            <img
+              id="brandModalPreview"
+              class="brand-identity-block__logo"
+              src="./brand-logo.png"
+              width="120"
+              height="120"
+              alt=""
+              decoding="async"
+            />
+            <p class="empty-hint brand-identity-block__meta">
+              未上传时使用仓库内置 <code>brand-logo.png</code>。保存后存于 <code>localStorage</code>，仅本机、本域可见。
+            </p>
+            <div class="toolbar brand-identity-modal__actions">
+              <button type="button" class="btn btn--primary" id="brandModalSaveBtn">保存并应用</button>
+              <button type="button" class="btn btn--secondary" id="brandModalResetBtn">恢复默认</button>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="brand-identity-modal__close btn btn--secondary" data-brand-modal-close>
+          关闭
+        </button>
       </div>
     </div>
     <script src="./amap-config.js"></script>

@@ -34,6 +34,563 @@ const IMPORT_LIST_VIEW_TYPE_KEY = "smart_route_import_list_view_type";
 const IMPORT_LIST_RANGE_FROM_KEY = "smart_route_data_list_from";
 const IMPORT_LIST_RANGE_TO_KEY = "smart_route_data_list_to";
 const IMPORT_LIST_STORE_KEY = "smart_route_import_list_store";
+const BRAND_NAME_KEY = "smart_route_brand_display_name";
+const BRAND_LOGO_KEY = "smart_route_brand_logo_data_url";
+/** 多品牌配置（本机 localStorage） */
+const BRAND_IDENTITIES_KEY = "smart_route_brand_identities_v1";
+const DEFAULT_BRAND_NAME = "供应链非正式行为";
+const DEFAULT_BRAND_LOGO_PATH = "./brand-logo.png";
+/** 常见 App / PWA 主图标与侧栏：正方、适中分辨率；与「≥32 / ≤1024」校验一致 */
+const BRAND_LOGO_RECOMM_PX = 512;
+const BRAND_LOGO_MAX_SIDE = 1024;
+const BRAND_LOGO_MIN_SIDE = 32;
+const BRAND_LOGO_MAX_FILE_BYTES = Math.floor(1.2 * 1024 * 1024);
+
+function genBrandId() {
+  return `b_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * @returns {{ id: string, name: string, logoDataUrl: string | null }[]}
+ */
+function loadBrandIdentities() {
+  const legacyName = (() => {
+    const s = localStorage.getItem(BRAND_NAME_KEY);
+    if (s != null && String(s).trim() !== "") return String(s).trim();
+    return null;
+  })();
+  const legacyLogo = (() => {
+    const s = localStorage.getItem(BRAND_LOGO_KEY);
+    if (s != null && String(s).startsWith("data:")) return s;
+    return null;
+  })();
+  try {
+    const raw = localStorage.getItem(BRAND_IDENTITIES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) {
+        return arr
+          .map((o) => ({
+            id: o && o.id != null && String(o.id) ? String(o.id) : genBrandId(),
+            name: o && o.name != null ? String(o.name) : "",
+            logoDataUrl:
+              o && o.logoDataUrl != null && String(o.logoDataUrl).startsWith("data:") ? String(o.logoDataUrl) : null,
+          }))
+          .filter((o) => o.id);
+      }
+    }
+  } catch {
+    /* fallthrough */
+  }
+  if (legacyName || legacyLogo) {
+    return [
+      {
+        id: genBrandId(),
+        name: legacyName && legacyName.trim() ? legacyName : DEFAULT_BRAND_NAME,
+        logoDataUrl: legacyLogo,
+      },
+    ];
+  }
+  return [{ id: genBrandId(), name: DEFAULT_BRAND_NAME, logoDataUrl: null }];
+}
+
+/**
+ * @param {{ id: string, name: string, logoDataUrl: string | null }[]} list
+ */
+function persistBrandIdentities(list) {
+  const safe = list.map((o) => ({
+    id: o.id,
+    name: o.name,
+    logoDataUrl: o.logoDataUrl && String(o.logoDataUrl).startsWith("data:") ? o.logoDataUrl : null,
+  }));
+  try {
+    localStorage.setItem(BRAND_IDENTITIES_KEY, JSON.stringify(safe));
+    localStorage.removeItem(BRAND_NAME_KEY);
+    localStorage.removeItem(BRAND_LOGO_KEY);
+  } catch (e) {
+    throw e;
+  }
+}
+
+function getBrandDisplayName() {
+  const list = loadBrandIdentities();
+  const p = list[0];
+  if (p && String(p.name || "").trim() !== "") return String(p.name).trim();
+  return DEFAULT_BRAND_NAME;
+}
+
+function getBrandLogoDataUrl() {
+  const list = loadBrandIdentities();
+  const p = list[0];
+  if (!p) return null;
+  const s = p.logoDataUrl;
+  if (s && String(s).startsWith("data:")) return s;
+  return null;
+}
+
+function getBrandLogoUrlForDisplay() {
+  return getBrandLogoDataUrl() || DEFAULT_BRAND_LOGO_PATH;
+}
+
+function applyBrandingToShell() {
+  const name = getBrandDisplayName();
+  const url = getBrandLogoUrlForDisplay();
+  document.querySelectorAll(".sidebar__brand-logo").forEach((el) => {
+    el.src = url;
+  });
+  const titleEl = document.querySelector(".sidebar__brand-title");
+  if (titleEl) titleEl.textContent = name;
+  document.title = name;
+  const linkIcon = document.querySelector('link[rel="icon"]');
+  if (linkIcon) {
+    linkIcon.href = url;
+    if (url.startsWith("data:")) {
+      const m = /^data:([^;,]+)/.exec(url);
+      if (m) {
+        const t = m[1];
+        linkIcon.type = t === "image/svg+xml" ? "image/svg+xml" : t;
+      }
+    } else {
+      linkIcon.type = "image/png";
+    }
+  }
+  document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute("href", url);
+}
+
+/**
+ * 校验品牌图示尺寸与类型；SVG 不校验像素边长、仅校大小与格式。
+ * @param {File} file
+ * @returns {Promise<{ dataUrl: string, w: number, h: number, isSvg: boolean }>}
+ */
+function processBrandImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const allowed = new Set([
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+      "image/webp",
+      "image/svg+xml",
+    ]);
+    if (!allowed.has(file.type)) {
+      reject(new Error("请使用 PNG、JPEG、WebP 或 SVG 格式的文件。"));
+      return;
+    }
+    if (file.size > BRAND_LOGO_MAX_FILE_BYTES) {
+      reject(new Error(`单文件需 ≤ ${Math.round((BRAND_LOGO_MAX_FILE_BYTES / 1024 / 1024) * 10) / 10}MB（与浏览器本地存储常见上限适配）。`));
+      return;
+    }
+    const isSvg = file.type === "image/svg+xml";
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      if (typeof dataUrl !== "string") {
+        reject(new Error("无法读取文件。"));
+        return;
+      }
+      if (isSvg) {
+        resolve({ dataUrl, w: 0, h: 0, isSvg: true });
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (w < BRAND_LOGO_MIN_SIDE || h < BRAND_LOGO_MIN_SIDE) {
+          reject(
+            new Error(
+              `图示像素边长需 ≥ ${BRAND_LOGO_MIN_SIDE}px（当前 ${w}×${h}）。`,
+            ),
+          );
+          return;
+        }
+        if (w > BRAND_LOGO_MAX_SIDE || h > BRAND_LOGO_MAX_SIDE) {
+          reject(
+            new Error(
+              `图示单边需 ≤ ${BRAND_LOGO_MAX_SIDE}px，请先按常见规格导出（当前 ${w}×${h}，推荐 ${BRAND_LOGO_RECOMM_PX}×${BRAND_LOGO_RECOMM_PX} 方图）。`,
+            ),
+          );
+          return;
+        }
+        resolve({ dataUrl, w, h, isSvg: false });
+      };
+      img.onerror = () => reject(new Error("无法解析为位图，请换一张图片。"));
+      img.src = dataUrl;
+    };
+    reader.onerror = () => reject(new Error("读取文件失败。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 品牌标识页多行；路由重复进入时先 abort 避免重复监听 */
+let _brandIdentityPageAC = null;
+
+function _brandListMsg(host, text, isErr) {
+  if (!host) return;
+  host.style.display = text ? "block" : "none";
+  host.className = isErr ? "alert alert--error" : "alert alert--muted";
+  host.textContent = text || "";
+}
+
+/**
+ * 侧栏弹窗：仅编辑「主展示」= 列表中第一项
+ * @param {{ onAfterSave?: () => void, saveOkHint?: string, resetOkHint?: string, signal?: AbortSignal }} meta
+ * @returns {{ resetPendingState: () => void }}
+ */
+function attachBrandIdentityModalPrimaryHandlers(meta) {
+  const { onAfterSave, saveOkHint = "已保存并应用。", resetOkHint = "已把主展示恢复为默认。", signal } = meta || {};
+  const nameIn = document.getElementById("brandModalNameInput");
+  const fileIn = document.getElementById("brandModalLogoFile");
+  const prev = document.getElementById("brandModalPreview");
+  const msg = document.getElementById("brandModalMsg");
+  const saveBtn = document.getElementById("brandModalSaveBtn");
+  const resetBtn = document.getElementById("brandModalResetBtn");
+  let pendingDataUrl = null;
+  const showM = (text, isErr) => {
+    if (!msg) return;
+    msg.style.display = text ? "block" : "none";
+    msg.className = isErr ? "alert alert--error" : "alert alert--muted";
+    msg.textContent = text;
+  };
+  const resetPendingState = () => {
+    pendingDataUrl = null;
+    if (fileIn) fileIn.value = "";
+    if (prev) prev.src = getBrandLogoUrlForDisplay();
+  };
+  const add = (el, type, fn) => {
+    if (!el) return;
+    el.addEventListener(type, fn, signal ? { signal } : undefined);
+  };
+  add(fileIn, "change", () => {
+    const f = fileIn && fileIn.files && fileIn.files[0];
+    if (!f) {
+      pendingDataUrl = null;
+      if (prev) prev.src = getBrandLogoUrlForDisplay();
+      showM("", false);
+      return;
+    }
+    void processBrandImageFile(f)
+      .then((ok) => {
+        pendingDataUrl = ok.dataUrl;
+        if (prev) prev.src = ok.dataUrl;
+        showM(ok.isSvg ? "已选择 SVG。点击保存以写入主展示。" : `已解析 ${ok.w}×${ok.h} px。点保存。`, false);
+      })
+      .catch((e) => {
+        pendingDataUrl = null;
+        if (prev) prev.src = getBrandLogoUrlForDisplay();
+        showM(e instanceof Error ? e.message : String(e), true);
+        if (fileIn) fileIn.value = "";
+      });
+  });
+  add(saveBtn, "click", () => {
+    const name = (nameIn && nameIn.value) || "";
+    const n = String(name).trim() || DEFAULT_BRAND_NAME;
+    const list = loadBrandIdentities();
+    if (list.length === 0) list.push({ id: genBrandId(), name: n, logoDataUrl: null });
+    else list[0].name = n;
+    if (pendingDataUrl) list[0].logoDataUrl = pendingDataUrl;
+    try {
+      persistBrandIdentities(list);
+    } catch (e) {
+      showM(
+        e && e.name === "QuotaExceededError" ? "本机存储空间不足，请减缩图示或删行后重试。" : (e && e.message) || String(e),
+        true,
+      );
+      return;
+    }
+    applyBrandingToShell();
+    if (prev) prev.src = getBrandLogoUrlForDisplay();
+    if (fileIn) fileIn.value = "";
+    pendingDataUrl = null;
+    if (nameIn) nameIn.value = getBrandDisplayName();
+    showM(saveOkHint, false);
+    onAfterSave && onAfterSave();
+  });
+  add(resetBtn, "click", () => {
+    const list = loadBrandIdentities();
+    if (list.length === 0) list.push({ id: genBrandId(), name: DEFAULT_BRAND_NAME, logoDataUrl: null });
+    list[0].name = DEFAULT_BRAND_NAME;
+    list[0].logoDataUrl = null;
+    try {
+      persistBrandIdentities(list);
+    } catch (e) {
+      showM(e && e.message ? String(e.message) : String(e), true);
+      return;
+    }
+    pendingDataUrl = null;
+    if (fileIn) fileIn.value = "";
+    if (nameIn) nameIn.value = DEFAULT_BRAND_NAME;
+    if (prev) prev.src = DEFAULT_BRAND_LOGO_PATH;
+    applyBrandingToShell();
+    showM(resetOkHint, false);
+  });
+  return { resetPendingState };
+}
+
+function _brandRowPreviewSrc(row) {
+  const s = row && row.logoDataUrl;
+  if (s && String(s).startsWith("data:")) return s;
+  return DEFAULT_BRAND_LOGO_PATH;
+}
+
+function _brandListRowsHtml(list) {
+  return list
+    .map((row, i) => {
+      const nm = row && row.name != null ? String(row.name) : "";
+      return `<div class="brand-identity-row" data-brand-id="${escapeHtml(String(row.id))}" data-brand-idx="${i}">
+    <div class="brand-identity-row__head">
+      <span class="brand-identity-row__badge">${i === 0 ? "主展示（侧栏/标题/页签）" : `品牌 ${i + 1}`}</span>
+    </div>
+    <div class="brand-identity-row__body">
+      <div class="field" style="margin:0;flex:1;min-width:8rem;max-width:20rem">
+        <span class="field-label">品牌名称</span>
+        <input type="text" class="cp-input brand-identity-row__name" maxlength="80" autocomplete="off" spellcheck="false" value="${escapeHtml(
+          nm,
+        )}" placeholder="与对外展示一致" />
+      </div>
+      <div class="field" style="margin:0">
+        <span class="field-label">品牌图示</span>
+        <input type="file" class="input-file brand-identity-row__file" accept="image/png,image/jpeg,image/webp,image/svg+xml" />
+      </div>
+    </div>
+    <div class="brand-identity-row__mark">
+      <img class="brand-identity-row__logo" width="80" height="80" alt="" src="${DEFAULT_BRAND_LOGO_PATH}" data-bi-preview="1" />
+      <div class="brand-identity-row__actions">
+        <button type="button" class="btn btn--primary btn--sm" data-bi-action="save">保存本行</button>
+        ${i > 0 ? '<button type="button" class="btn btn--secondary btn--sm" data-bi-action="primary">设为主展示</button>' : ""}
+        <button type="button" class="btn btn--secondary btn--sm" data-bi-action="remove" ${
+          list.length <= 1 ? "disabled" : ""
+        }>删除</button>
+      </div>
+    </div>
+  </div>`;
+    })
+    .join("");
+}
+
+function _hydrateBrandListPreviews() {
+  const list = loadBrandIdentities();
+  const byId = new Map(list.map((r) => [r.id, r]));
+  document.querySelectorAll(".brand-identity-row[data-brand-id]").forEach((wrap) => {
+    const id = wrap.getAttribute("data-brand-id");
+    const row = id ? byId.get(id) : null;
+    if (!row) return;
+    const im = wrap.querySelector("[data-bi-preview]");
+    if (im) im.src = _brandRowPreviewSrc(row);
+  });
+}
+
+function renderBrandIdentitiesListShell() {
+  const host = document.getElementById("brandIdentitiesList");
+  if (!host) return;
+  const list = loadBrandIdentities();
+  host.innerHTML = _brandListRowsHtml(list);
+  _hydrateBrandListPreviews();
+}
+
+function bindBrandIdentityPage() {
+  const msg = document.getElementById("brandIdentityMsg");
+  _brandIdentityPageAC?.abort();
+  _brandIdentityPageAC = new AbortController();
+  const sig = _brandIdentityPageAC.signal;
+  const pendingById = new Map();
+  const showPageMsg = (t, e) => _brandListMsg(msg, t, e);
+
+  renderBrandIdentitiesListShell();
+
+  const listEl = document.getElementById("brandIdentitiesList");
+  if (listEl) {
+    listEl.addEventListener(
+      "click",
+      (ev) => {
+        const t = ev.target;
+        if (!(t instanceof Element)) return;
+        const row = t.closest(".brand-identity-row");
+        const act = t.closest("[data-bi-action]");
+        if (!row || !act) return;
+        const id = row.getAttribute("data-brand-id");
+        if (!id) return;
+        const action = act.getAttribute("data-bi-action");
+        const list0 = loadBrandIdentities();
+        const idx = list0.findIndex((x) => x.id === id);
+        if (idx < 0) return;
+
+        if (action === "save") {
+          const nameIn = row.querySelector(".brand-identity-row__name");
+          const name = (nameIn && nameIn.value) != null ? String(nameIn.value).trim() : "";
+          if (!name) {
+            showPageMsg("请填写该行的品牌名称后再保存。", true);
+            return;
+          }
+          const patch = { name, logoDataUrl: list0[idx].logoDataUrl };
+          if (pendingById.has(id)) {
+            patch.logoDataUrl = pendingById.get(id) || null;
+          }
+          try {
+            const listA = loadBrandIdentities();
+            const j = listA.findIndex((x) => x.id === id);
+            if (j < 0) return;
+            listA[j].name = name;
+            listA[j].logoDataUrl = patch.logoDataUrl;
+            persistBrandIdentities(listA);
+          } catch (e) {
+            showPageMsg(
+              e && e.name === "QuotaExceededError" ? "本机存储空间不足，请使用更小的图片或删除部分品牌行。" : String(e),
+              true,
+            );
+            return;
+          }
+          pendingById.delete(id);
+          if (idx === 0) applyBrandingToShell();
+          const im = row.querySelector("[data-bi-preview]");
+          const rSaved = loadBrandIdentities().find((x) => x.id === id);
+          if (im && rSaved) im.src = _brandRowPreviewSrc(rSaved);
+          showPageMsg("该行已保存。", false);
+          return;
+        }
+        if (action === "primary") {
+          if (idx === 0) return;
+          const listB = loadBrandIdentities();
+          const [moved] = listB.splice(idx, 1);
+          listB.unshift(moved);
+          persistBrandIdentities(listB);
+          applyBrandingToShell();
+          renderBrandIdentitiesListShell();
+          showPageMsg("已设为主展示（列表首行）。", false);
+          return;
+        }
+        if (action === "remove") {
+          if (list0.length <= 1) {
+            showPageMsg("请至少保留一条品牌标识。", true);
+            return;
+          }
+          if (!window.confirm("确定删除该条品牌行？")) return;
+          const listC = loadBrandIdentities().filter((x) => x.id !== id);
+          persistBrandIdentities(listC);
+          pendingById.delete(id);
+          applyBrandingToShell();
+          renderBrandIdentitiesListShell();
+          showPageMsg("已删除。", false);
+        }
+      },
+      { signal: sig },
+    );
+    listEl.addEventListener(
+      "change",
+      (ev) => {
+        const t = ev.target;
+        if (!(t instanceof HTMLInputElement) || t.type !== "file" || !t.classList.contains("brand-identity-row__file")) return;
+        const row = t.closest(".brand-identity-row");
+        if (!row) return;
+        const id = row.getAttribute("data-brand-id");
+        if (!id) return;
+        const f = t.files && t.files[0];
+        if (!f) {
+          pendingById.delete(id);
+          const list = loadBrandIdentities();
+          const r = list.find((x) => x.id === id);
+          const im = row.querySelector("[data-bi-preview]");
+          if (im) im.src = r ? _brandRowPreviewSrc(r) : DEFAULT_BRAND_LOGO_PATH;
+          return;
+        }
+        void processBrandImageFile(f)
+          .then((ok) => {
+            pendingById.set(id, ok.dataUrl);
+            const im = row.querySelector("[data-bi-preview]");
+            if (im) im.src = ok.dataUrl;
+            showPageMsg("已选中新文件，请点「保存本行」写入。", false);
+          })
+          .catch((e) => {
+            showPageMsg(e instanceof Error ? e.message : String(e), true);
+            t.value = "";
+          });
+      },
+      { signal: sig },
+    );
+  }
+
+  const addBtn = document.getElementById("brandAddRowBtn");
+  addBtn?.addEventListener(
+    "click",
+    () => {
+      const list = loadBrandIdentities();
+      list.push({ id: genBrandId(), name: "", logoDataUrl: null });
+      try {
+        persistBrandIdentities(list);
+      } catch (e) {
+        showPageMsg(String(e), true);
+        return;
+      }
+      renderBrandIdentitiesListShell();
+      showPageMsg("已添加一行。请填写名称、上传图示后点「保存本行」。", false);
+    },
+    { signal: sig },
+  );
+
+  const resetAll = document.getElementById("brandResetAllBtn");
+  resetAll?.addEventListener(
+    "click",
+    () => {
+      if (!window.confirm("将清空多品牌配置，只保留一条内置默认主展示。确定？")) return;
+      pendingById.clear();
+      const list = [{ id: genBrandId(), name: DEFAULT_BRAND_NAME, logoDataUrl: null }];
+      try {
+        persistBrandIdentities(list);
+      } catch (e) {
+        showPageMsg(String(e), true);
+        return;
+      }
+      applyBrandingToShell();
+      renderBrandIdentitiesListShell();
+      showPageMsg("已恢复为单条默认品牌，并已应用到侧栏。", false);
+    },
+    { signal: sig },
+  );
+}
+
+function initBrandIdentityModal() {
+  const modal = document.getElementById("brandIdentityModal");
+  if (!modal) return;
+  const nameIn = document.getElementById("brandModalNameInput");
+  const { resetPendingState } = attachBrandIdentityModalPrimaryHandlers({
+    onAfterSave: () => {
+      modal.classList.remove("modal--open");
+      modal.hidden = true;
+    },
+  });
+  const open = () => {
+    resetPendingState();
+    if (nameIn) nameIn.value = getBrandDisplayName();
+    const pMsg = document.getElementById("brandModalMsg");
+    if (pMsg) {
+      pMsg.style.display = "none";
+      pMsg.textContent = "";
+    }
+    modal.hidden = false;
+    modal.classList.add("modal--open");
+    nameIn && nameIn.focus();
+  };
+  const close = () => {
+    modal.classList.remove("modal--open");
+    modal.hidden = true;
+  };
+  const brandInner = document.querySelector(".sidebar__brand-inner");
+  brandInner && brandInner.addEventListener("click", (e) => {
+    e.preventDefault();
+    open();
+  });
+  brandInner && brandInner.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open();
+    }
+  });
+  modal.querySelectorAll("[data-brand-modal-close]").forEach((el) => {
+    el.addEventListener("click", close);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && modal && modal.classList.contains("modal--open")) close();
+  });
+}
 
 /** 由 renderResult / renderDiffAnalysis 挂接；导入成功后仅刷新展示（后台已重算比对）。 */
 let _refetchCompareDisplayOnly = null;
@@ -979,6 +1536,11 @@ function setWorkspaceTitle(title) {
   if (el) el.textContent = title;
 }
 
+function setWorkspaceCrumb(text) {
+  const el = document.getElementById("workspace-l1-crumb");
+  if (el) el.textContent = text;
+}
+
 function loadAmapScript(key, securityJsCode) {
   return new Promise((resolve, reject) => {
     if (window.AMap) {
@@ -1248,13 +1810,45 @@ function overviewSection(o) {
     </details>`;
 }
 
+function renderBrandIdentity() {
+  app.innerHTML = `
+    <div class="page-head">
+      <p>支持<strong>多行品牌</strong>，每行可单独维护 <strong>名称 + 图示</strong>。侧栏、浏览器页签、窗口标题使用<strong>第一行</strong>（可点「设为主展示」将某行调到最上）。数据写入本机 <code>localStorage</code>，仅本机可见。</p>
+    </div>
+    <div class="brand-identity-block">
+      <p class="brand-identity-hint">
+        图示建议：<strong>${BRAND_LOGO_RECOMM_PX}×${BRAND_LOGO_RECOMM_PX} px</strong> 方图、PNG 或 WebP；单边
+        <strong>${BRAND_LOGO_MIN_SIDE}～${BRAND_LOGO_MAX_SIDE} px</strong>，单文件 <strong>≤ 1.2MB</strong>。亦支持 SVG。选完文件后须点该行的 <strong>保存本行</strong> 才会落库（主展示为第 1 行时同时刷新侧栏）。
+      </p>
+      <p id="brandIdentityMsg" class="alert" style="display:none" role="status"></p>
+      <div class="toolbar brand-identity-list-toolbar" style="flex-wrap:wrap;align-items:center;gap:8px">
+        <button type="button" class="btn btn--secondary" id="brandAddRowBtn">添加品牌</button>
+        <button type="button" class="btn btn--secondary" id="brandResetAllBtn" title="清空多品牌，只留一条系统默认主展示">全部恢复为内置默认</button>
+      </div>
+      <p class="empty-hint" style="margin:0 0 10px">与「<strong>仓库主数据</strong>」里的业务品牌不是同一数据；本页为<strong>本系统</strong>侧栏/展示用。</p>
+      <div id="brandIdentitiesList" class="brand-identity-list" role="list"></div>
+    </div>
+  `;
+  bindBrandIdentityPage();
+}
+
 function route() {
   _refetchCompareDisplayOnly = null;
   _refetchDiffAnalysis = null;
+  setWorkspaceCrumb("智能排线");
   const hash = window.location.hash || "#import";
+  const path = hash.split("?")[0];
   if (hash.startsWith("#route-map")) {
     renderRouteMap();
     setWorkspaceTitle("路线地图");
+  } else if (path === "#net-map") {
+    setWorkspaceCrumb("仓网规划");
+    renderNetMap();
+    setWorkspaceTitle("仓网地图");
+  } else if (path === "#warehouse-base") {
+    setWorkspaceCrumb("仓网规划");
+    renderWarehouseBase();
+    setWorkspaceTitle("仓库基础数据");
   } else if (hash === "#import") {
     renderImport();
     setWorkspaceTitle("数据导入");
@@ -1267,6 +1861,10 @@ function route() {
   } else if (hash === "#customer-profiles") {
     renderCustomerProfiles();
     setWorkspaceTitle("客户基础数据");
+  } else if (path === "#brand-identity") {
+    setWorkspaceCrumb("仓网规划");
+    renderBrandIdentity();
+    setWorkspaceTitle("品牌标识");
   } else if (hash === "#compare" || hash === "#result") {
     if (hash === "#compare") {
       history.replaceState(null, "", `${location.pathname}${location.search}#result`);
@@ -3065,6 +3663,1381 @@ async function cpLoadList() {
   }
 }
 
+/** 是否可作为一对合法 (经度, 纬度) */
+function _isValidLngLatPair(lng, lat) {
+  return (
+    Number.isFinite(lng) &&
+    Number.isFinite(lat) &&
+    lng >= -180 &&
+    lng <= 180 &&
+    lat >= -90 &&
+    lat <= 90
+  );
+}
+
+/**
+ * 解析主数据「仓库坐标」为 [经度, 纬度]（用于高德底图，即 GCJ-02）。
+ * 若单元格按国内习惯写成「纬度,经度」而非法为经度,纬度 时，会按中国大陆/周边范围尝试纠正。
+ * @returns {[number, number] | null}
+ */
+function parseWarehouseLngLat(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const t = String(raw).trim();
+  const i = t.indexOf(",");
+  if (i < 0) return null;
+  const a = parseFloat(t.slice(0, i).trim());
+  const b = parseFloat(t.slice(i + 1).trim());
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+
+  const pLngLat = [a, b];
+  const pLatLng = [b, a];
+
+  /* 仅当「经度,纬度」非法，但「纬度,经度」合法且像国内/周边常见写法时，才交换。不在「两顺序都合法」时自动互换，避免国外点被误判。 */
+  if (!_isValidLngLatPair(a, b) && _isValidLngLatPair(b, a) && a >= 2 && a <= 55 && b >= 70 && b <= 150) {
+    return pLatLng;
+  }
+  if (_isValidLngLatPair(a, b)) {
+    return pLngLat;
+  }
+  return null;
+}
+
+/**
+ * 从仓库主数据项提取业务品牌名（供与「品牌标识」localStorage 行匹配）。
+ * @param {any} it
+ * @returns {string[]}
+ */
+function extractWarehouseBusinessBrandNames(it) {
+  if (!it) return [];
+  const bb = it.business_brands;
+  if (Array.isArray(bb) && bb.length) {
+    const out = [];
+    for (const row of bb) {
+      if (row && row.name != null) {
+        const s = String(row.name).trim();
+        if (s) out.push(s);
+      }
+    }
+    if (out.length) return out;
+  }
+  const s0 = (it.brand || "").trim();
+  if (!s0) return [];
+  return s0
+    .split(";")
+    .map((part) => {
+      const p = part.trim();
+      if (!p) return null;
+      const k = p.indexOf("（LOGO：");
+      if (k > 0) return p.slice(0, k).trim() || null;
+      return p;
+    })
+    .filter((x) => x != null && String(x).trim() !== "");
+}
+
+/**
+ * @param {string} name
+ * @returns {{ imageUrl: string, identityHit: boolean, hasDataLogo: boolean }}
+ */
+function resolveIdentityLogoByBusinessBrandName(name) {
+  const n = (name || "").trim();
+  const fallbackUrl = new URL(DEFAULT_BRAND_LOGO_PATH, window.location.href).href;
+  if (!n) {
+    return { imageUrl: fallbackUrl, identityHit: false, hasDataLogo: false };
+  }
+  for (const id of loadBrandIdentities()) {
+    if (String(id.name || "").trim() === n) {
+      const u = id.logoDataUrl && String(id.logoDataUrl).startsWith("data:") ? id.logoDataUrl : null;
+      return {
+        imageUrl: u || fallbackUrl,
+        identityHit: true,
+        hasDataLogo: !!u,
+      };
+    }
+  }
+  return { imageUrl: fallbackUrl, identityHit: false, hasDataLogo: false };
+}
+
+/**
+ * @param {string[]} names
+ * @returns {{ name: string, imageUrl: string, identityHit: boolean, hasDataLogo: boolean }[]}
+ */
+function resolveNetMapBrandSlots(names) {
+  const arr = Array.isArray(names) ? names : [];
+  if (arr.length === 0) {
+    return [{ name: "—", imageUrl: new URL(DEFAULT_BRAND_LOGO_PATH, window.location.href).href, identityHit: false, hasDataLogo: false }];
+  }
+  return arr.map((nm) => {
+    const r = resolveIdentityLogoByBusinessBrandName(nm);
+    return { name: nm, imageUrl: r.imageUrl, identityHit: r.identityHit, hasDataLogo: r.hasDataLogo };
+  });
+}
+
+/**
+ * 标记点图标：优先第一条带 data: LOGO 的；否则首品牌图示 URL
+ * @param {{ name: string, imageUrl: string, hasDataLogo: boolean }[]} slots
+ */
+function netMapMarkerImageUrlFromSlots(slots) {
+  const s = Array.isArray(slots) && slots.length ? slots : resolveNetMapBrandSlots([]);
+  const withData = s.find((x) => x.hasDataLogo && x.imageUrl && x.imageUrl.startsWith("data:"));
+  if (withData) return withData.imageUrl;
+  if (s[0] && s[0].imageUrl) return s[0].imageUrl;
+  return new URL(DEFAULT_BRAND_LOGO_PATH, window.location.href).href;
+}
+
+/**
+ * @param {any} wh
+ * @param {{ name: string, imageUrl: string, identityHit: boolean, hasDataLogo: boolean }[]} brandSlots
+ */
+function buildNetMapInfoWindowHtml(wh, brandSlots) {
+  const wn = wh && wh.warehouse_name != null ? String(wh.warehouse_name) : "—";
+  const code = wh && wh.warehouse_code != null && String(wh.warehouse_code).trim() ? String(wh.warehouse_code).trim() : null;
+  const addr = wh && wh.address != null ? String(wh.address) : "";
+  const grp = wh && wh.group_name != null ? String(wh.group_name) : "";
+  const org = wh && wh.owning_org != null ? String(wh.owning_org) : "";
+  const brandRows = (Array.isArray(brandSlots) && brandSlots.length ? brandSlots : resolveNetMapBrandSlots([]))
+    .map(
+      (b) => `<div class="net-map-info__brand">
+        <img class="net-map-info__brand-img" width="40" height="40" alt="" src=${JSON.stringify(
+          b.imageUrl,
+        )} />
+        <div>
+          <span class="net-map-info__brand-name">${escapeHtml(b.name)}</span>
+          ${b.identityHit ? "" : '<span class="net-map-info__brand-miss">未在品牌标识中配置</span>'}
+        </div>
+      </div>`,
+    )
+    .join("");
+  const cRow =
+    wh && wh._mapLng != null && wh._mapLat != null
+      ? `<p class="net-map-info__coord"><span>打点</span> <code>经度 ${Number(wh._mapLng).toFixed(5)}，纬度 ${Number(wh._mapLat).toFixed(5)}</code></p>`
+      : "";
+  return `<div class="net-map-info">
+    <p class="net-map-info__title">${escapeHtml(wn)}${
+    code
+      ? ` <span class="net-map-info__code"><code>${escapeHtml(code)}</code></span>`
+      : ""
+  }</p>
+    ${cRow}
+    ${addr ? `<p class="net-map-info__row"><span>地址</span> ${escapeHtml(addr)}</p>` : ""}
+    ${grp ? `<p class="net-map-info__row"><span>集团</span> ${escapeHtml(grp)}</p>` : ""}
+    ${org ? `<p class="net-map-info__row"><span>组织</span> ${escapeHtml(org)}</p>` : ""}
+    <div class="net-map-info__brands">${brandRows}</div>
+  </div>`;
+}
+
+/** 仓网地图筛选项：与「仓库主数据」接口 group_name / brand 一致（精确匹配） */
+const NET_MAP = { fGroupName: "", fBrand: "" };
+let _netMapAMapInstance = null;
+
+function netMapWarehouseListQuery() {
+  const p = new URLSearchParams();
+  p.set("skip", "0");
+  p.set("limit", "200");
+  if (NET_MAP.fGroupName) p.set("group_name", NET_MAP.fGroupName);
+  if (NET_MAP.fBrand) p.set("brand", NET_MAP.fBrand);
+  return p;
+}
+
+function netMapDestroyMap() {
+  if (_netMapAMapInstance) {
+    try {
+      _netMapAMapInstance.destroy();
+    } catch (e) {
+      /* 忽略 */
+    }
+    _netMapAMapInstance = null;
+  }
+}
+
+async function initNetMapPage() {
+  const errEl = document.getElementById("netMapErr");
+  const metaEl = document.getElementById("netMapMeta");
+  const mapEl = document.getElementById("netMapContainer");
+  if (!mapEl) return;
+  netMapDestroyMap();
+  if (errEl) errEl.innerHTML = "";
+
+  let totalAll = 0;
+  let items = [];
+  try {
+    const r = await fetch(`${API_BASE}/warehouse-base?${netMapWarehouseListQuery()}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (errEl) {
+        errEl.innerHTML = `<div class="alert alert--error">加载仓库主数据失败：${escapeHtml(
+          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || r.status,
+        )}</div>`;
+      }
+      if (metaEl) metaEl.textContent = "—";
+      return;
+    }
+    totalAll = Number(d.total) || 0;
+    items = Array.isArray(d.items) ? d.items : [];
+  } catch (e) {
+    if (errEl) errEl.innerHTML = `<div class="alert alert--error">${backendUnreachableHtml(e)}</div>`;
+    if (metaEl) metaEl.textContent = "—";
+    return;
+  }
+
+  const withCoord = [];
+  for (const it of items) {
+    const xy = parseWarehouseLngLat(it && it.coordinate_raw);
+    if (!xy) continue;
+    const names = extractWarehouseBusinessBrandNames(it);
+    const brandSlots = resolveNetMapBrandSlots(names);
+    const entry = { ...it, _mapLng: xy[0], _mapLat: xy[1] };
+    withCoord.push({ it: entry, lng: xy[0], lat: xy[1], brandSlots });
+  }
+
+  if (metaEl) {
+    const fg = NET_MAP.fGroupName ? `集团=<strong>${escapeHtml(NET_MAP.fGroupName)}</strong> ` : "";
+    const fb = NET_MAP.fBrand ? `品牌=<strong>${escapeHtml(NET_MAP.fBrand)}</strong> ` : "";
+    const fHint = NET_MAP.fGroupName || NET_MAP.fBrand ? `当前筛选：${fg}${fb}。` : "当前为全部。 ";
+    let m = `${fHint}本批请求 ${items.length} 条；有有效「仓库坐标」可打点 ${withCoord.length} 条。底图与坐标均为 <strong>GCJ-02</strong>。自采 <strong>GPS WGS-84</strong> 与底图会偏差，建议用主数据按地址补缺。`;
+    if (totalAll > 200) m += " 全库条数可能超过 200，当前仅使用前 200 条。";
+    metaEl.innerHTML = m;
+  }
+
+  if (withCoord.length === 0) {
+    if (errEl) {
+      if (items.length === 0) {
+        const hf =
+          NET_MAP.fGroupName || NET_MAP.fBrand
+            ? "本筛选下暂无仓库。可尝试放宽「集团 / 业务品牌」或到"
+            : "暂无数据。可先到";
+        errEl.innerHTML = `<div class="alert alert--muted">${hf}<a href="#warehouse-base" class="nav-tab">仓库基础数据</a>维护。</div>`;
+      } else {
+        errEl.innerHTML = `<div class="alert alert--muted">本批共 ${items.length} 条，但无有效「仓库坐标」可打点。请在<a href="#warehouse-base" class="nav-tab">仓库主数据</a>中补全经纬度或点「应用筛选」换一批。</div>`;
+      }
+    }
+    return;
+  }
+
+  const key =
+    (typeof window.__AMAP_WEB_KEY__ === "string" && window.__AMAP_WEB_KEY__) || localStorage.getItem("amap_web_key") || "";
+  const securityJsCode =
+    (typeof window.__AMAP_SECURITY_JS_CODE__ === "string" && window.__AMAP_SECURITY_JS_CODE__) ||
+    localStorage.getItem("amap_security_js_code") ||
+    "";
+  if (!key) {
+    if (errEl) errEl.innerHTML = `<div class="alert alert--error">未配置高德 Web Key（<code>amap-config.js</code> 或 localStorage <code>amap_web_key</code>）。</div>`;
+    return;
+  }
+
+  try {
+    await loadAmapScript(key, securityJsCode);
+  } catch {
+    if (errEl) errEl.innerHTML = `<div class="alert alert--error">高德地图脚本加载失败。</div>`;
+    return;
+  }
+
+  const AMap = window.AMap;
+  if (!AMap) {
+    if (errEl) errEl.innerHTML = `<div class="alert alert--error">高德 AMap 未就绪。</div>`;
+    return;
+  }
+
+  const map = new AMap.Map("netMapContainer", { zoom: 6, viewMode: "2D" });
+  _netMapAMapInstance = map;
+  const infoWin = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -28), closeWhenClickMap: true });
+  const markers = [];
+  for (const row of withCoord) {
+    const { it, lng, lat, brandSlots } = row;
+    const pos = [lng, lat];
+    const iconUrl = netMapMarkerImageUrlFromSlots(brandSlots);
+    const mk = new AMap.Marker({
+      position: pos,
+      map,
+      title: (it.warehouse_name && String(it.warehouse_name)) || "",
+      zIndex: 100,
+    });
+    try {
+      const S = 32;
+      const half = S / 2;
+      mk.setIcon(
+        new AMap.Icon({
+          size: new AMap.Size(S, S),
+          image: iconUrl,
+          imageSize: new AMap.Size(S, S),
+        }),
+      );
+      // 方标底边中心对准地理点（x 负一半宽、y 负整高，与默认针语义一致，减轻「点不在图标下」的错觉）
+      mk.setOffset(new AMap.Pixel(-half, -S));
+    } catch {
+      /* 退化为默认针 */
+    }
+    const html = buildNetMapInfoWindowHtml(it, brandSlots);
+    mk.on("click", () => {
+      infoWin.setContent(html);
+      infoWin.open(map, pos);
+    });
+    markers.push(mk);
+  }
+  if (markers.length) {
+    try {
+      map.setFitView(markers, false, [48, 48, 48, 48], 14);
+    } catch {
+      map.setCenter([withCoord[0].lng, withCoord[0].lat]);
+    }
+  }
+}
+
+function renderNetMap() {
+  app.innerHTML = `
+    <div class="page-head page-head--compact">
+      <p class="empty-hint" style="margin:0;max-width:50rem">
+        地图与<strong>高德底图</strong>使用同一坐标系 <strong>GCJ-02</strong>。主数据里「仓库坐标」须为 <strong>经度,纬度</strong>；从表格粘贴成「纬度,经度」时，系统会尽量按国内范围自动纠正。若自采
+        <strong>GPS 经纬度</strong> 直填，在图上会与道路偏几十至几百米，建议用主数据里<a href="#warehouse-base" class="nav-tab">按地址</a>重算/补缺。<strong>品牌图示</strong>与「<a href="#brand-identity" class="nav-tab">品牌标识</a>」<strong>同名</strong>行一致（<code>localStorage</code>），未配则用默认图。下方 <strong>集团、业务品牌</strong>筛选会限制本页从接口加载的仓库，从而只显示符合条件的点与信息窗内品牌。
+      </p>
+    </div>
+    <div class="net-map-filters" role="search" aria-label="仓网地图筛选">
+      <div class="field" style="min-width:6.5rem">
+        <span class="field-label">集团</span>
+        <select id="nm-f-group_name" class="net-map-filter-select" aria-label="集团"><option value="">全部</option></select>
+      </div>
+      <div class="field" style="min-width:7.5rem">
+        <span class="field-label">业务品牌</span>
+        <select id="nm-f-brand" class="net-map-filter-select" aria-label="业务品牌"><option value="">全部</option></select>
+      </div>
+      <div class="toolbar" style="margin:0;align-items:flex-end">
+        <button type="button" class="btn btn--primary" id="nm-apply">应用筛选</button>
+        <button type="button" class="btn btn--secondary" id="nm-reset" title="集团、品牌改回全部">重置</button>
+      </div>
+    </div>
+    <p id="netMapMeta" class="net-map-meta empty-hint" style="margin:8px 0 10px">正在加载数据…</p>
+    <div id="netMapErr" class="net-map-err" aria-live="polite"></div>
+    <div id="netMapContainer" class="net-map-canvas" role="application" aria-label="高德地图 仓网"></div>
+  `;
+  void (async function netMapBootstrap() {
+    let fo2 = { group_name: [], brand: [] };
+    try {
+      const r0 = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+      if (r0.ok) fo2 = await r0.json();
+    } catch {
+      /* 忽略 */
+    }
+    const c2 = (k) => (fo2 && Array.isArray(fo2[k]) ? fo2[k] : []);
+    const gE = document.getElementById("nm-f-group_name");
+    const bE = document.getElementById("nm-f-brand");
+    if (gE) gE.innerHTML = wbSelectOptionsHtml(c2("group_name"), NET_MAP.fGroupName);
+    if (bE) bE.innerHTML = wbSelectOptionsHtml(c2("brand"), NET_MAP.fBrand);
+    const syncN = () => {
+      const ga = document.getElementById("nm-f-group_name");
+      const ba = document.getElementById("nm-f-brand");
+      NET_MAP.fGroupName = ((ga && ga.value) || "").trim();
+      NET_MAP.fBrand = ((ba && ba.value) || "").trim();
+    };
+    document.getElementById("nm-apply")?.addEventListener("click", () => {
+      syncN();
+      void initNetMapPage();
+    });
+    document.getElementById("nm-reset")?.addEventListener("click", () => {
+      NET_MAP.fGroupName = "";
+      NET_MAP.fBrand = "";
+      if (gE) gE.innerHTML = wbSelectOptionsHtml(c2("group_name"), "");
+      if (bE) bE.innerHTML = wbSelectOptionsHtml(c2("brand"), "");
+      void initNetMapPage();
+    });
+    await initNetMapPage();
+  })();
+}
+
+const WB = {
+  fWarehouse: "",
+  warehouseOptions: [],
+  fGroupName: "",
+  fOwningOrg: "",
+  fBrand: "",
+  fStatus: "",
+  fWarehouseType: "",
+  skip: 0,
+  limit: 20,
+  total: 0,
+  editId: null,
+  modalKey: null,
+  _warehouseComboBlurT: null,
+};
+
+const WB_LIST_COLUMNS = [
+  { k: "warehouse_code", label: "仓库代码", w: "7rem" },
+  { k: "warehouse_name", label: "仓库名称", w: "8.5rem" },
+  { k: "group_name", label: "集团", w: "6.5rem" },
+  { k: "owning_org", label: "所属组织", w: "9rem" },
+  { k: "brand", label: "业务品牌", w: "9.5rem" },
+  { k: "status", label: "状态", w: "5rem" },
+  { k: "warehouse_type", label: "仓库类型", w: "5.5rem" },
+  { k: "address", label: "仓库地址", w: "12rem" },
+  { k: "coordinate_raw", label: "仓库坐标", w: "8rem" },
+  { k: "area_sqm", label: "仓库面积", w: "5.5rem" },
+  { k: "applicant", label: "申请人", w: "5rem" },
+  { k: "import_source", label: "写入来源", w: "6.5rem" },
+  { k: "created_at", label: "创建时间", w: "9.5rem" },
+];
+
+const WB_NCOL = WB_LIST_COLUMNS.length + 1;
+
+const WB_FIELDS = [
+  { k: "warehouse_code", label: "仓库代码", t: "text" },
+  { k: "warehouse_name", label: "仓库名称", t: "text", req: true },
+  { k: "group_name", label: "集团", t: "text", req: true },
+  { k: "owning_org", label: "所属组织", t: "text" },
+  { k: "logistics_org", label: "物流组织", t: "text" },
+  { k: "dc_store_name", label: "配送中心门店名称", t: "text" },
+  { k: "warehouse_category", label: "仓库分类", t: "text" },
+  { k: "temperature_layer", label: "仓库温层", t: "text" },
+  { k: "manager_name", label: "仓库负责人", t: "text" },
+  { k: "manager_phone", label: "联系电话", t: "text" },
+  { k: "address", label: "仓库地址", t: "area", req: true },
+  { k: "coordinate_raw", label: "仓库坐标", t: "text" },
+  { k: "status", label: "状态", t: "text" },
+  { k: "warehouse_type", label: "仓库类型", t: "text" },
+  { k: "business_type", label: "仓库经营类型", t: "text" },
+  { k: "property_type", label: "仓库产权", t: "text" },
+  { k: "receiver_contact", label: "收货联系人", t: "text" },
+  { k: "receiver_phone", label: "收货电话", t: "text" },
+  { k: "area_sqm", label: "仓库面积", t: "num" },
+  { k: "coverage_region", label: "覆盖门店区域", t: "text" },
+  { k: "zone_function", label: "库区功能", t: "text" },
+  { k: "expected_store_count", label: "预计覆盖门店数", t: "num" },
+  { k: "monthly_covered_stores", label: "本月真实覆盖门店数量", t: "text" },
+  { k: "opening_date", label: "开仓日", t: "text" },
+  { k: "sku_count_text", label: "覆盖SKU数", t: "text" },
+  { k: "purchase_shared_flag", label: "是否启用采购共享仓", t: "text" },
+  { k: "purchase_direct_flag", label: "是否启用采购直通", t: "text" },
+  { k: "is_group_order_warehouse", label: "当前仓是否商品组下单仓", t: "text" },
+  { k: "remark", label: "备注", t: "area" },
+  { k: "applicant", label: "申请人", t: "text" },
+  { k: "source_created_at", label: "来源侧创建时间", t: "text" },
+  { k: "import_source", label: "写入来源", t: "text" },
+];
+
+function buildWbColgroupHtml() {
+  return `<colgroup>
+    ${WB_LIST_COLUMNS.map(
+      (c) => `<col class="cp-col" data-wb-colk="${c.k}" style="width:${c.w};min-width:${c.w}"/>`,
+    ).join("")}
+    <col class="cp-col cp-col--actions" data-wb-colk="_actions" style="width:5.5rem;min-width:5.5rem"/>
+  </colgroup>`;
+}
+
+function wbListCellText(it, col) {
+  const raw = it[col.k];
+  if (raw == null || raw === "") return "—";
+  const s = String(raw);
+  if (col.k === "created_at" || col.k === "updated_at") {
+    return s.replace("T", " ").slice(0, 19);
+  }
+  if (col.k === "area_sqm" && Number.isFinite(Number(raw))) {
+    return String(raw);
+  }
+  return s;
+}
+
+function wbListCellDisplay(it, col) {
+  const full = wbListCellText(it, col);
+  if (full === "—") return { html: "—", title: "" };
+  const maxCh = col.k === "address" ? 40 : 32;
+  const t = full.length > maxCh ? full.slice(0, maxCh) + "…" : full;
+  return {
+    html: escapeHtml(t),
+    title: full.length > maxCh ? ` title="${escapeHtml(full)}"` : "",
+  };
+}
+
+function wbFieldInputHtml(f, val) {
+  const v = val != null && val !== "" ? String(val) : "";
+  const req = f.req ? " *" : "";
+  if (f.t === "area") {
+    return `<div class="field field--cp">
+      <span class="field-label">${escapeHtml(f.label)}${req}</span>
+      <textarea data-wb-key="${f.k}" rows="2" class="cp-input">${escapeHtml(v)}</textarea>
+    </div>`;
+  }
+  if (f.t === "num") {
+    const numV = v === "" || v === "null" ? "" : v;
+    return `<div class="field field--cp">
+      <span class="field-label">${escapeHtml(f.label)}</span>
+      <input class="cp-input" type="number" step="any" data-wb-key="${f.k}" value="${escapeHtml(
+        numV,
+      )}" />
+    </div>`;
+  }
+  return `<div class="field field--cp">
+    <span class="field-label">${escapeHtml(f.label)}${req}</span>
+    <input class="cp-input" type="text" data-wb-key="${f.k}" value="${escapeHtml(v)}" />
+  </div>`;
+}
+
+function _wbApiOrigin() {
+  try {
+    return new URL(API_BASE, window.location.href).origin;
+  } catch {
+    return "";
+  }
+}
+
+function _wbPublicLogoUrl(logoPath) {
+  if (!logoPath) return "";
+  const p = String(logoPath);
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
+  return _wbApiOrigin() + (p.startsWith("/") ? p : `/${p}`);
+}
+
+function wbBusinessBrandRowHtml(b) {
+  const name = b && b.name != null ? String(b.name) : "";
+  const la = b && b.logo_as != null ? String(b.logo_as) : "";
+  const imgSrc = b && b.logo_url ? _wbPublicLogoUrl(b.logo_url) : "";
+  const prev = imgSrc
+    ? `<img class="wb-bb-preview" src="${escapeHtml(imgSrc)}" alt="" width="64" height="32" style="object-fit:contain" />`
+    : "";
+  return `<div class="wb-bb-row">
+    <div class="wb-bb-row__grid">
+      <div class="field field--cp" style="margin:0">
+        <span class="field-label">业务品牌 *</span>
+        <input type="text" class="cp-input wb-bb-name" value="${escapeHtml(
+          name,
+        )}" placeholder="如 万好" />
+      </div>
+      <div class="field field--cp" style="margin:0">
+        <span class="field-label">LOGO 沿用</span>
+        <input type="text" class="cp-input wb-bb-logo-as" value="${escapeHtml(
+          la,
+        )}" placeholder="如 好想来" />
+        <p class="empty-hint" style="margin:2px 0 0;font-size:0.75rem">使用哪套门店/连锁图示（与侧栏系统品牌不同）</p>
+      </div>
+    </div>
+    <div class="wb-bb-file-row" style="margin-top:6px;align-items:center;gap:8px;flex-wrap:wrap;display:flex">
+      <span class="field-label" style="margin:0;min-width:4rem">图示上传</span>
+      <input type="file" class="input-file wb-bb-file" accept="image/*" />
+      ${prev}
+    </div>
+  </div>`;
+}
+
+function wbBuildBusinessBrandsBlockHtml(biz) {
+  const rows = Array.isArray(biz) && biz.length > 0 ? biz : [{ name: "", logo_as: "" }];
+  return `<div class="field field--cp wb-bb-block" id="wb-bb-block">
+  <span class="field-label">业务品牌（可多行）</span>
+  <p class="empty-hint" style="margin:0 0 8px">
+    用于业务数据、报表与展示，<strong>不是</strong>本系统侧栏的「品牌标识」设置。可多条，如 <strong>万好</strong> 且 LOGO 沿用 <strong>好想来</strong>。
+  </p>
+  <div id="wb-bb-rows" class="wb-bb-rows">${rows.map((b) => wbBusinessBrandRowHtml(b)).join("")}</div>
+  <button type="button" class="btn btn--secondary btn--sm" id="wb-bb-add" type="button">添加一行业务品牌</button>
+</div>`;
+}
+
+function wbBuildFormFieldsHtml(bizBrands) {
+  const bbr = Array.isArray(bizBrands) && bizBrands.length ? bizBrands : null;
+  return (
+    WB_FIELDS.map((f) => wbFieldInputHtml(f, "")).join("") + wbBuildBusinessBrandsBlockHtml(bbr)
+  );
+}
+
+function wbFormValuesFromData(data) {
+  if (!data) return;
+  const wrap = document.getElementById("wb-form-fields");
+  if (wrap) {
+    const bbr =
+      Array.isArray(data.business_brands) && data.business_brands.length
+        ? data.business_brands
+        : [{ name: "", logo_as: "" }];
+    wrap.innerHTML = wbBuildFormFieldsHtml(bbr);
+    wbBindBusinessBrandsAdd();
+  }
+  for (const f of WB_FIELDS) {
+    const el = document.querySelector(`[data-wb-key="${f.k}"]`);
+    if (!el) continue;
+    let v = data[f.k];
+    if (v == null) v = "";
+    else v = String(v);
+    if (f.t === "num" && (v === "" || v === "null")) {
+      el.value = "";
+    } else {
+      el.value = v;
+    }
+  }
+}
+
+function wbBindBusinessBrandsAdd() {
+  document.getElementById("wb-bb-add")?.addEventListener("click", () => {
+    const c = document.getElementById("wb-bb-rows");
+    if (!c) return;
+    c.insertAdjacentHTML("beforeend", wbBusinessBrandRowHtml({ name: "", logo_as: "" }));
+  });
+}
+
+function wbCollectBusinessBrandsPayload() {
+  const rows = document.querySelectorAll("#wb-bb-rows .wb-bb-row");
+  const out = [];
+  for (const row of rows) {
+    const name = (row.querySelector(".wb-bb-name")?.value ?? "").trim();
+    const logo_as = (row.querySelector(".wb-bb-logo-as")?.value ?? "").trim();
+    if (!name) continue;
+    out.push({ name, logo_as: logo_as || null });
+  }
+  return out;
+}
+
+function wbFormCollectPayload() {
+  const o = {};
+  for (const f of WB_FIELDS) {
+    const el = document.querySelector(`[data-wb-key="${f.k}"]`);
+    if (!el) continue;
+    const raw = "value" in el ? el.value : "";
+    if (f.t === "num") {
+      const t = String(raw).trim();
+      o[f.k] = t === "" ? null : parseFloat(t);
+    } else {
+      const t = String(raw).trim();
+      o[f.k] = t === "" ? null : t;
+    }
+  }
+  o.business_brands = wbCollectBusinessBrandsPayload();
+  return o;
+}
+
+/**
+ * 保存成功后，按与提交顺序一致的业务品牌行上传各 `图示上传` 文件（仅含名称非空的行与服务器返回的 id 对齐）。
+ * @param {any} saved
+ * @returns {Promise<string[]>} 每行错误说明，空数组表示均成功
+ */
+async function wbUploadBusinessBrandLogosAfterSave(saved) {
+  const bbs = Array.isArray(saved?.business_brands) ? saved.business_brands : [];
+  const rows = document.querySelectorAll("#wb-bb-rows .wb-bb-row");
+  const errs = [];
+  let j = 0;
+  for (const row of rows) {
+    const name = (row.querySelector(".wb-bb-name")?.value ?? "").trim();
+    if (!name) continue;
+    const bb = bbs[j];
+    j += 1;
+    const id = bb?.id;
+    if (id == null) continue;
+    const file = row.querySelector(".wb-bb-file")?.files?.[0];
+    if (!file) continue;
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`${API_BASE}/warehouse-base/business-brands/${id}/file`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      const msg = typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || String(r.status);
+      errs.push(`${name}：${msg}`);
+    }
+  }
+  return errs;
+}
+
+function wbOpenModal() {
+  const m = document.getElementById("wb-modal");
+  if (!m) return;
+  m.removeAttribute("hidden");
+  m.classList.add("modal--open");
+  WB.modalKey?.abort();
+  WB.modalKey = new AbortController();
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape") wbCloseModal();
+    },
+    { signal: WB.modalKey.signal },
+  );
+}
+
+function wbCloseModal() {
+  const m = document.getElementById("wb-modal");
+  if (!m) return;
+  WB.modalKey?.abort();
+  WB.modalKey = null;
+  m.classList.remove("modal--open");
+  m.setAttribute("hidden", "");
+  WB.editId = null;
+}
+
+function wbSyncFiltersFromInputs() {
+  const gv = (id) => (document.getElementById(id)?.value ?? "").trim();
+  WB.fWarehouse = gv("wb-f-warehouse");
+  WB.fGroupName = gv("wb-f-group_name");
+  WB.fOwningOrg = gv("wb-f-owning_org");
+  WB.fBrand = gv("wb-f-brand");
+  WB.fStatus = gv("wb-f-status");
+  WB.fWarehouseType = gv("wb-f-warehouse_type");
+  const ps = document.getElementById("wb-page-size");
+  if (ps) {
+    const n = parseInt(String(ps.value), 10);
+    if (n === 20 || n === 50 || n === 100) WB.limit = n;
+  }
+}
+
+function wbBuildFilterQuery() {
+  const p = new URLSearchParams();
+  if (WB.fWarehouse) p.set("warehouse", WB.fWarehouse);
+  if (WB.fGroupName) p.set("group_name", WB.fGroupName);
+  if (WB.fOwningOrg) p.set("owning_org", WB.fOwningOrg);
+  if (WB.fBrand) p.set("brand", WB.fBrand);
+  if (WB.fStatus) p.set("status", WB.fStatus);
+  if (WB.fWarehouseType) p.set("warehouse_type", WB.fWarehouseType);
+  return p;
+}
+
+function wbUpdateExportLink() {
+  const a = document.getElementById("wb-export");
+  if (a) {
+    const q = wbBuildFilterQuery().toString();
+    a.href = q ? `${API_BASE}/warehouse-base/export?${q}` : `${API_BASE}/warehouse-base/export`;
+  }
+}
+
+function wbComboboxLabel(row) {
+  if (!row || typeof row !== "object") return "";
+  const c = String(row.warehouse_code != null ? row.warehouse_code : "").trim();
+  const n = String(row.warehouse_name != null ? row.warehouse_name : "").trim();
+  if (c && n) return `${c}（${n}）`;
+  if (n) return n;
+  return c || "";
+}
+
+function wbRowMatchesLocalWarehouseQ(row, q) {
+  if (!q) return true;
+  const t = String(q).toLowerCase();
+  const c = String(row.warehouse_code != null ? row.warehouse_code : "").toLowerCase();
+  const n = String(row.warehouse_name != null ? row.warehouse_name : "").toLowerCase();
+  if (c.includes(t) || n.includes(t)) return true;
+  return wbComboboxLabel(row).toLowerCase().includes(t);
+}
+
+function wbShowWarehouseCombobox() {
+  const input = document.getElementById("wb-f-warehouse");
+  if (input) {
+    input.setAttribute("aria-expanded", "true");
+  }
+  const ul = document.getElementById("wb-warehouse-cb-list");
+  if (ul) ul.removeAttribute("hidden");
+}
+
+function wbHideWarehouseCombobox() {
+  const input = document.getElementById("wb-f-warehouse");
+  if (input) {
+    input.setAttribute("aria-expanded", "false");
+  }
+  const ul = document.getElementById("wb-warehouse-cb-list");
+  if (ul) ul.setAttribute("hidden", "");
+}
+
+function wbRefreshWarehouseComboboxList() {
+  const input = document.getElementById("wb-f-warehouse");
+  const ul = document.getElementById("wb-warehouse-cb-list");
+  if (!input || !ul) return;
+  const q = (input.value ?? "").trim();
+  let rows = Array.isArray(WB.warehouseOptions) ? [...WB.warehouseOptions] : [];
+  rows = rows.filter((r) => wbRowMatchesLocalWarehouseQ(r, q));
+  const cap = 300;
+  rows = rows.slice(0, cap);
+  if (rows.length === 0) {
+    ul.innerHTML = `<li class="wb-warehouse-cb__empty" role="presentation">无匹配项</li>`;
+    return;
+  }
+  ul.innerHTML = rows
+    .map((r) => {
+      const label = wbComboboxLabel(r);
+      const payload = encodeURIComponent(
+        JSON.stringify({
+          warehouse_code: r.warehouse_code,
+          warehouse_name: r.warehouse_name,
+        }),
+      );
+      return `<li role="presentation">
+      <button type="button" class="wb-warehouse-cb__opt" data-payload="${escapeHtml(payload)}">${escapeHtml(
+        label,
+      )}</button>
+    </li>`;
+    })
+    .join("");
+}
+
+function wbSetWarehouseComboboxData(fo) {
+  WB.warehouseOptions = Array.isArray(fo && fo.warehouses) ? fo.warehouses : [];
+}
+
+let _wbComboboxDocBound = false;
+function wbBindWarehouseCombobox() {
+  if (_wbComboboxDocBound) {
+    return;
+  }
+  _wbComboboxDocBound = true;
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+    if (!(t instanceof Node)) return;
+    const wrap = document.querySelector(".wb-warehouse-cb__wrap");
+    if (wrap && !wrap.contains(t)) {
+      wbHideWarehouseCombobox();
+    }
+  });
+}
+
+function wbInitWarehouseCombobox() {
+  const input = document.getElementById("wb-f-warehouse");
+  const ul = document.getElementById("wb-warehouse-cb-list");
+  if (!input || !ul) return;
+  wbBindWarehouseCombobox();
+  input.setAttribute("aria-controls", "wb-warehouse-cb-list");
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-expanded", "false");
+  if (input.value !== WB.fWarehouse) {
+    input.value = WB.fWarehouse;
+  }
+  const onOpen = () => {
+    if (WB._warehouseComboBlurT) {
+      clearTimeout(WB._warehouseComboBlurT);
+      WB._warehouseComboBlurT = null;
+    }
+    wbRefreshWarehouseComboboxList();
+    wbShowWarehouseCombobox();
+  };
+  input.addEventListener("focus", onOpen);
+  input.addEventListener("input", () => {
+    WB.fWarehouse = (input.value ?? "").trim();
+    wbRefreshWarehouseComboboxList();
+    wbShowWarehouseCombobox();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      wbHideWarehouseCombobox();
+    }
+  });
+  input.addEventListener("blur", () => {
+    if (WB._warehouseComboBlurT) {
+      clearTimeout(WB._warehouseComboBlurT);
+    }
+    WB._warehouseComboBlurT = setTimeout(() => {
+      wbHideWarehouseCombobox();
+    }, 120);
+  });
+  ul.addEventListener("mousedown", (e) => {
+    const b = e.target && e.target.closest ? e.target.closest("button.wb-warehouse-cb__opt") : null;
+    if (!(b instanceof HTMLButtonElement) || !b.dataset.payload) return;
+    e.preventDefault();
+    let o;
+    try {
+      o = JSON.parse(decodeURIComponent(b.dataset.payload));
+    } catch {
+      return;
+    }
+    const code = (o.warehouse_code != null ? String(o.warehouse_code) : "").trim();
+    const name = (o.warehouse_name != null ? String(o.warehouse_name) : "").trim();
+    input.value = code && name ? `${code} ${name}` : code || name;
+    WB.fWarehouse = (input.value ?? "").trim();
+    wbUpdateExportLink();
+    wbRefreshWarehouseComboboxList();
+  });
+}
+
+/** 筛选项：枚举多选一下拉；value 用 escapeHtml 防注入 */
+function wbSelectOptionsHtml(options, currentVal) {
+  const list = Array.isArray(options) ? options : [];
+  const cur = (currentVal != null && currentVal !== "" ? String(currentVal) : "").trim();
+  const set = new Set(list);
+  let html = `<option value="">全部</option>`;
+  for (const v of list) {
+    const s = v != null ? String(v) : "";
+    const selected = s === cur ? " selected" : "";
+    html += `<option value="${escapeHtml(s)}"${selected}>${escapeHtml(s)}</option>`;
+  }
+  if (cur && !set.has(cur)) {
+    html += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(
+      cur,
+    )}（未在枚举中）</option>`;
+  }
+  return html;
+}
+
+/**
+ * @param {Record<string, string[]>} fo
+ * @param {number} lim
+ */
+function buildWarehouseBasePageHtml(fo, lim) {
+  wbSetWarehouseComboboxData(fo);
+  const c = (k) => (fo && Array.isArray(fo[k]) ? fo[k] : []);
+  const wv = escapeHtml(WB.fWarehouse);
+  return `
+    <div class="page-head page-head--compact">
+      <p><small class="empty-hint">与「<strong>仓管理</strong>」Excel 一致。业务必填为<strong>仓库名称、仓库地址、业务品牌、集团</strong>（与页面标 * 一致）；<strong>仓库代码可空</strong>。保存仓库后会<strong>按仓库地址</strong>自动请求高德并写入「仓库坐标」（未配置 Key 时与排线页一致为模拟）。可点<strong>经纬度补缺</strong>对当前筛条件下的记录批量补坐标。<strong>上传导入成功</strong>后，库表<strong>仅保留</strong>本次 Excel 中<strong>校验通过</strong>的行；未出现在文件中的旧数据会<strong>全部删除</strong>。同次导入中相同「仓库代码」或（无代码时）相同「名称+集团+地址」以<strong>后者为准</strong>。导入时必填列须均有值。下拉里可<strong>输入关键字</strong>在「代码+名称」候选中再过滤；<strong>仓库</strong>筛选项对库内为<strong>代码或名称子串</strong>；其余为<strong>精确</strong>。多选为「且」。<strong>导出会带上当前筛选</strong>。导入/新增/编辑后点「刷新」可更新候选项。</small></p>
+    </div>
+    <div class="wb-filters" role="search" aria-label="仓库主数据筛选">
+      <div class="field field--wb-warehouse" style="min-width:10rem;max-width:20rem">
+        <span class="field-label">仓库</span>
+        <div class="wb-warehouse-cb__wrap">
+          <input
+            type="text"
+            id="wb-f-warehouse"
+            class="cp-input wb-warehouse-cb__input"
+            placeholder="代码或名称，模糊"
+            value="${wv}"
+            autocomplete="off"
+            aria-label="仓库（代码与名称，模糊）"
+            aria-autocomplete="list"
+            role="combobox"
+            aria-controls="wb-warehouse-cb-list"
+            aria-expanded="false"
+          />
+          <ul id="wb-warehouse-cb-list" class="wb-warehouse-cb__list" role="listbox" hidden></ul>
+        </div>
+      </div>
+      <div class="field" style="min-width:6.5rem">
+        <span class="field-label">集团</span>
+        <select id="wb-f-group_name" class="wb-filter-select" aria-label="集团">${wbSelectOptionsHtml(
+          c("group_name"),
+          WB.fGroupName,
+        )}</select>
+      </div>
+      <div class="field" style="min-width:8.5rem">
+        <span class="field-label">所属组织</span>
+        <select id="wb-f-owning_org" class="wb-filter-select" aria-label="所属组织">${wbSelectOptionsHtml(
+          c("owning_org"),
+          WB.fOwningOrg,
+        )}</select>
+      </div>
+      <div class="field" style="min-width:8.5rem">
+        <span class="field-label">业务品牌</span>
+        <select
+          id="wb-f-brand"
+          class="wb-filter-select"
+          aria-label="业务品牌（数据中的品牌名，与侧栏系统品牌无关）"
+        >${wbSelectOptionsHtml(
+          c("brand"),
+          WB.fBrand,
+        )}</select>
+      </div>
+      <div class="field" style="min-width:5.5rem">
+        <span class="field-label">状态</span>
+        <select id="wb-f-status" class="wb-filter-select" aria-label="状态">${wbSelectOptionsHtml(
+          c("status"),
+          WB.fStatus,
+        )}</select>
+      </div>
+      <div class="field" style="min-width:6.5rem">
+        <span class="field-label">仓库类型</span>
+        <select id="wb-f-warehouse_type" class="wb-filter-select" aria-label="仓库类型">${wbSelectOptionsHtml(
+          c("warehouse_type"),
+          WB.fWarehouseType,
+        )}</select>
+      </div>
+    </div>
+    <div class="toolbar" style="flex-wrap:wrap;align-items:center;margin-top:10px;gap:8px 12px">
+      <button type="button" class="btn btn--secondary" id="wb-search">查询</button>
+      <button type="button" class="btn btn--secondary" id="wb-filter-reset" title="筛选项改回全部">重置条件</button>
+      <button type="button" class="btn btn--secondary" id="wb-refresh">刷新</button>
+      <span class="toolbar__sep" aria-hidden="true" style="opacity:0.35">|</span>
+      <button type="button" class="btn btn--primary" id="wb-new">新增</button>
+      <button type="button" class="btn btn--secondary" id="wb-geocode-bulk" title="按当前筛选，对无「仓库坐标」的仓库用地址调高德并落库，最多 3000 条">
+        经纬度补缺
+      </button>
+      <a class="btn btn--secondary" id="wb-export" href="${API_BASE}/warehouse-base/export" target="_blank" rel="noopener">导出 Excel</a>
+      <div class="field field--file-import">
+        <span class="field-label">导入</span>
+        <input type="file" id="wb-file" class="input-file" accept=".xlsx,.xls" />
+      </div>
+      <button type="button" class="btn btn--primary" id="wb-import">上传导入</button>
+    </div>
+    <div id="wb-msg" style="margin-top:8px"></div>
+    <div class="toolbar wb-pager" role="group" aria-label="分页" style="flex-wrap:wrap;align-items:center;margin:12px 0;gap:8px 12px">
+      <span id="wb-total" class="cp-list-meta__total" style="margin:0">共 — 条</span>
+      <div class="field" style="min-width:5rem">
+        <span class="field-label">每页</span>
+        <select id="wb-page-size" aria-label="每页条数">
+          <option value="20" ${lim === 20 ? "selected" : ""}>20</option>
+          <option value="50" ${lim === 50 ? "selected" : ""}>50</option>
+          <option value="100" ${lim === 100 ? "selected" : ""}>100</option>
+        </select>
+      </div>
+      <span id="wb-page-info" class="empty-hint" style="margin:0"></span>
+      <button type="button" class="btn btn--secondary" id="wb-prev" disabled>上一页</button>
+      <button type="button" class="btn btn--secondary" id="wb-next" disabled>下一页</button>
+    </div>
+    <div class="table-scroll cp-table-scroll">
+      <table class="data-table data-table--cp" id="wb-table">
+        ${buildWbColgroupHtml()}
+        <thead>
+          <tr>
+            ${WB_LIST_COLUMNS.map(
+              (c2) =>
+                `<th class="cp-th" scope="col"><span class="cp-th__text">${escapeHtml(
+                  c2.label,
+                )}</span></th>`,
+            ).join("")}
+            <th class="cp-th cp-th--action" scope="col"><span class="cp-th__text">操作</span></th>
+          </tr>
+        </thead>
+        <tbody id="wb-tbody"></tbody>
+      </table>
+    </div>
+    <div id="wb-modal" class="modal" hidden>
+      <div class="modal__backdrop" data-wb-m-close></div>
+      <div class="modal__dialog modal__dialog--xl" role="dialog" aria-modal="true">
+        <h2 class="modal__title" id="wb-modal-title">仓库</h2>
+        <p class="empty-hint" style="margin-top:0">标 * 为必填（<strong>仓库名称、仓库地址、集团</strong>，以及下方<strong>至少一条业务品牌</strong>）；仓库代码可空。与来源 Excel 字段对齐；<strong>业务品牌</strong>与侧栏「品牌标识」不是同一套设置。</p>
+        <div class="cp-form-grid" id="wb-form-fields">${wbBuildFormFieldsHtml(null)}</div>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--secondary" data-wb-m-close>取消</button>
+          <button type="button" class="btn btn--primary" id="wb-save">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wbRepaintFilterSelects(fo) {
+  const c = (k) => (fo && Array.isArray(fo[k]) ? fo[k] : []);
+  const m = [
+    ["fGroupName", "group_name", "wb-f-group_name"],
+    ["fOwningOrg", "owning_org", "wb-f-owning_org"],
+    ["fBrand", "brand", "wb-f-brand"],
+    ["fStatus", "status", "wb-f-status"],
+    ["fWarehouseType", "warehouse_type", "wb-f-warehouse_type"],
+  ];
+  for (const [wk, fk, elid] of m) {
+    const el = document.getElementById(elid);
+    if (el) el.innerHTML = wbSelectOptionsHtml(c(fk), WB[wk]);
+  }
+  wbSetWarehouseComboboxData(fo);
+  wbRefreshWarehouseComboboxList();
+}
+
+async function wbReloadFilterOptions() {
+  try {
+    const r = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+    if (!r.ok) return;
+    const fo = await r.json();
+    wbSyncFiltersFromInputs();
+    wbRepaintFilterSelects(fo);
+  } catch (e) {
+    /* 忽略，列表仍可用手动保留下来的筛选 */
+  }
+}
+
+async function wbAfterDataMutation() {
+  await wbReloadFilterOptions();
+  await wbLoadList();
+}
+
+function wbUpdatePager() {
+  const total = Number(WB.total) || 0;
+  const limit = Math.min(200, Math.max(1, Number(WB.limit) || 20));
+  const skip = Math.max(0, Number(WB.skip) || 0);
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+  const currentPage = total === 0 ? 0 : Math.min(totalPages, Math.floor(skip / limit) + 1);
+  const totalEl = document.getElementById("wb-total");
+  if (totalEl) {
+    totalEl.textContent = `共 ${total} 条`;
+  }
+  const pageEl = document.getElementById("wb-page-info");
+  if (pageEl) {
+    pageEl.textContent =
+      total === 0
+        ? "第 0 / 0 页"
+        : `第 ${currentPage} / ${totalPages} 页（每页 ${limit} 条）`;
+  }
+  const prev = document.getElementById("wb-prev");
+  const next = document.getElementById("wb-next");
+  if (prev) prev.disabled = total === 0 || skip <= 0;
+  if (next) next.disabled = total === 0 || skip + limit >= total;
+  const psize = document.getElementById("wb-page-size");
+  if (psize && String(psize.value) !== String(WB.limit)) psize.value = String(WB.limit);
+}
+
+function wbResetFilters() {
+  WB.fWarehouse = "";
+  WB.fGroupName = "";
+  WB.fOwningOrg = "";
+  WB.fBrand = "";
+  WB.fStatus = "";
+  WB.fWarehouseType = "";
+  WB.skip = 0;
+  for (const id of [
+    "wb-f-warehouse",
+    "wb-f-group_name",
+    "wb-f-owning_org",
+    "wb-f-brand",
+    "wb-f-status",
+    "wb-f-warehouse_type",
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  }
+  wbHideWarehouseCombobox();
+}
+
+async function wbLoadList() {
+  const tbody = document.getElementById("wb-tbody");
+  if (!tbody) return;
+  wbSyncFiltersFromInputs();
+  tbody.innerHTML = `<tr><td colspan="${WB_NCOL}" class="empty-hint">加载中…</td></tr>`;
+  const q = wbBuildFilterQuery();
+  q.set("skip", String(WB.skip));
+  q.set("limit", String(WB.limit));
+  try {
+    const r = await fetch(`${API_BASE}/warehouse-base?${q}`);
+    const d = await r.json();
+    if (!r.ok) {
+      tbody.innerHTML = `<tr><td colspan="${WB_NCOL}" class="alert alert--error">加载失败</td></tr>`;
+      return;
+    }
+    WB.total = Number(d.total) || 0;
+    wbUpdatePager();
+    wbUpdateExportLink();
+    const items = d.items || [];
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="${WB_NCOL}" class="empty-hint">暂无数据。可调整筛选条件、导入与「仓管理」模板一致的 .xlsx，或点新增。</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items
+      .map((it) => {
+        const cells = WB_LIST_COLUMNS.map((col) => {
+          const { html, title } = wbListCellDisplay(it, col);
+          return `<td class="cp-list-cell"${title}>${html}</td>`;
+        }).join("");
+        return `<tr>${cells}<td class="table-actions">
+        <button type="button" class="btn btn--secondary btn--sm" data-wb="edit" data-id="${it.id}">编辑</button>
+        <button type="button" class="btn btn--secondary btn--sm" data-wb="del" data-id="${it.id}" style="color:var(--danger)">删除</button>
+      </td></tr>`;
+      })
+      .join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="${WB_NCOL}">${backendUnreachableHtml(e)}</td></tr>`;
+  }
+}
+
+function bindWarehouseBaseEvents() {
+  wbInitWarehouseCombobox();
+  document.getElementById("wb-search")?.addEventListener("click", () => {
+    wbSyncFiltersFromInputs();
+    WB.skip = 0;
+    void wbLoadList();
+  });
+  document.getElementById("wb-filter-reset")?.addEventListener("click", () => {
+    wbResetFilters();
+    void wbLoadList();
+  });
+  document.getElementById("wb-refresh")?.addEventListener("click", () => {
+    void (async () => {
+      await wbReloadFilterOptions();
+      await wbLoadList();
+    })();
+  });
+  document.getElementById("wb-page-size")?.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLSelectElement)) return;
+    const n = parseInt(String(t.value), 10);
+    if (n === 20 || n === 50 || n === 100) {
+      WB.limit = n;
+      WB.skip = 0;
+      void wbLoadList();
+    }
+  });
+  document.getElementById("wb-new")?.addEventListener("click", () => {
+    WB.editId = null;
+    const t = document.getElementById("wb-modal-title");
+    if (t) t.textContent = "新增仓库";
+    const wrap = document.getElementById("wb-form-fields");
+    if (wrap) {
+      wrap.innerHTML = wbBuildFormFieldsHtml(null);
+      const imp = document.querySelector(`[data-wb-key="import_source"]`);
+      if (imp) imp.value = "页面录入";
+    }
+    wbBindBusinessBrandsAdd();
+    wbOpenModal();
+  });
+  document.getElementById("wb-import")?.addEventListener("click", async () => {
+    const file = document.getElementById("wb-file")?.files?.[0];
+    if (!file) {
+      const el = document.getElementById("wb-msg");
+      if (el) el.innerHTML = `<div class="alert alert--muted">请先选择 .xlsx 文件</div>`;
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    const el = document.getElementById("wb-msg");
+    if (el) el.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
+    const r = await fetch(
+      `${API_BASE}/warehouse-base/import?${new URLSearchParams({ data_source: "页面导入" })}`,
+      { method: "POST", body: fd },
+    );
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">${escapeHtml(
+          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || "导入失败",
+        )}</div>`;
+      }
+      return;
+    }
+    if (el) {
+      el.innerHTML = `<div class="code-block"><pre>${escapeHtml(JSON.stringify(d, null, 2))}</pre></div>`;
+    }
+    void wbAfterDataMutation();
+  });
+  document.getElementById("wb-geocode-bulk")?.addEventListener("click", async () => {
+    wbSyncFiltersFromInputs();
+    const q = wbBuildFilterQuery();
+    q.set("only_missing", "true");
+    const el = document.getElementById("wb-msg");
+    if (el) el.innerHTML = `<div class="alert alert--muted">正在按地址补全经纬度（当前筛选，仅补缺）…</div>`;
+    try {
+      const r = await fetch(`${API_BASE}/warehouse-base/batch-geocode?${q}`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (el) {
+          el.innerHTML = `<div class="alert alert--error">${escapeHtml(
+            typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || "请求失败",
+          )}</div>`;
+        }
+        return;
+      }
+      const cap = d.capped ? "（命中超过 3000 条，仅处理前 3000 条）" : "";
+      if (el) {
+        el.innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">${escapeHtml(
+          `补缺完成：更新 ${d.updated ?? 0} 条，跳过 ${d.skipped ?? 0} 条，失败 ${d.failed ?? 0} 条${cap}。`,
+        )}</div>`;
+      }
+      void wbAfterDataMutation();
+    } catch (e) {
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">${escapeHtml(String(e && e.message ? e.message : e))}</div>`;
+      }
+    }
+  });
+  document.getElementById("wb-prev")?.addEventListener("click", () => {
+    wbSyncFiltersFromInputs();
+    if (WB.skip <= 0) return;
+    WB.skip = Math.max(0, WB.skip - WB.limit);
+    void wbLoadList();
+  });
+  document.getElementById("wb-next")?.addEventListener("click", () => {
+    wbSyncFiltersFromInputs();
+    if (Number(WB.total) > 0 && WB.skip + WB.limit < WB.total) {
+      WB.skip += WB.limit;
+      void wbLoadList();
+    }
+  });
+  document.getElementById("wb-modal")?.querySelectorAll("[data-wb-m-close]").forEach((b) => {
+    b.addEventListener("click", () => wbCloseModal());
+  });
+  document.getElementById("wb-save")?.addEventListener("click", async () => {
+    const body = wbFormCollectPayload();
+    const wbRequired = [
+      ["warehouse_name", "仓库名称"],
+      ["group_name", "集团"],
+      ["address", "仓库地址"],
+    ];
+    for (const [key, label] of wbRequired) {
+      const raw = body[key];
+      if (raw == null || String(raw).trim() === "") {
+        const el = document.getElementById("wb-msg");
+        if (el) el.innerHTML = `<div class="alert alert--error">请填写${label}</div>`;
+        return;
+      }
+    }
+    if (!Array.isArray(body.business_brands) || body.business_brands.length === 0) {
+      const el = document.getElementById("wb-msg");
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">请至少添加一行业务品牌并填写「业务品牌」名称</div>`;
+      }
+      return;
+    }
+    const isEdit = WB.editId != null;
+    const url = isEdit
+      ? `${API_BASE}/warehouse-base/${WB.editId}`
+      : `${API_BASE}/warehouse-base`;
+    const r = await fetch(url, {
+      method: isEdit ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const el = document.getElementById("wb-msg");
+      if (el) {
+        el.innerHTML = `<div class="alert alert--error">${escapeHtml(
+          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d) || "保存失败",
+        )}</div>`;
+      }
+      return;
+    }
+    const logoErrs = await wbUploadBusinessBrandLogosAfterSave(d);
+    wbCloseModal();
+    const el = document.getElementById("wb-msg");
+    if (el) {
+      if (logoErrs.length) {
+        el.innerHTML = `<div class="alert" style="background:#fef3c7;border-color:#fcd34d">${escapeHtml(
+          "已保存。部分业务品牌图示未上传：",
+        )}${escapeHtml(logoErrs.join("；"))}</div>`;
+      } else {
+        el.innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">已保存</div>`;
+      }
+    }
+    void wbAfterDataMutation();
+  });
+
+  document.getElementById("wb-table")?.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const id = t.getAttribute("data-id");
+    if (t.getAttribute("data-wb") === "edit" && id) {
+      WB.editId = parseInt(id, 10);
+      const r = await fetch(`${API_BASE}/warehouse-base/${id}`);
+      const it = await r.json();
+      if (!r.ok) return;
+      const title = document.getElementById("wb-modal-title");
+      if (title) title.textContent = "编辑仓库";
+      wbFormValuesFromData(it);
+      wbOpenModal();
+    }
+    if (t.getAttribute("data-wb") === "del" && id) {
+      if (!window.confirm("确定删除该条仓库主数据？")) return;
+      const r2 = await fetch(`${API_BASE}/warehouse-base/${id}`, { method: "DELETE" });
+      if (r2.ok) {
+        void wbAfterDataMutation();
+      } else {
+        const x = await r2.json().catch(() => ({}));
+        const el = document.getElementById("wb-msg");
+        if (el) {
+          el.innerHTML = `<div class="alert alert--error">${escapeHtml(x.detail || "删除失败")}</div>`;
+        }
+      }
+    }
+  });
+  void wbLoadList();
+}
+
+function renderWarehouseBase() {
+  WB.editId = null;
+  if (![20, 50, 100].includes(WB.limit)) WB.limit = 20;
+  const lim = WB.limit;
+  app.innerHTML = `<div class="page-head page-head--compact"><p class="empty-hint" style="margin:0">正在加载筛选项…</p></div>`;
+  void (async () => {
+    let fo = {
+      warehouses: [],
+      group_name: [],
+      owning_org: [],
+      brand: [],
+      status: [],
+      warehouse_type: [],
+    };
+    try {
+      const r = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+      if (r.ok) fo = { ...fo, ...(await r.json()) };
+    } catch (_e) {
+      /* 忽略，仍渲染空下拉 */
+    }
+    app.innerHTML = buildWarehouseBasePageHtml(fo, lim);
+    bindWarehouseBaseEvents();
+    void wbLoadList();
+  })();
+}
+
 function renderCustomerProfiles() {
   CP.editId = null;
   app.innerHTML = `
@@ -3652,5 +5625,7 @@ function renderStoreMaster() {
   else smLoadPair();
 }
 
+initBrandIdentityModal();
+applyBrandingToShell();
 window.addEventListener("hashchange", route);
 route();
