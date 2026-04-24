@@ -29,6 +29,83 @@ function inferApiOrigin() {
 const API_ORIGIN = inferApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
 
+const AUTH_TOKEN_KEY = "smart_route_jwt";
+const AUTH_ME_KEY = "smart_route_me";
+
+function getAuthToken() {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY) || "";
+}
+
+function getAuthUser() {
+  try {
+    const s = sessionStorage.getItem(AUTH_ME_KEY);
+    if (!s) return null;
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function setAuthUser(u) {
+  if (u == null) sessionStorage.removeItem(AUTH_ME_KEY);
+  else sessionStorage.setItem(AUTH_ME_KEY, JSON.stringify(u));
+}
+
+function clearAuth() {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_ME_KEY);
+}
+
+function getAuthHeader() {
+  const t = getAuthToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/**
+ * 请求业务 API 时自动附加 Bearer，并在 401/403 时清理凭证回到登录（登录接口除外）。
+ * @param {string} url
+ * @param {RequestInit} [options]
+ */
+async function apiFetch(url, options = {}) {
+  const o = { ...options };
+  const baseH = { ...getAuthHeader() };
+  if (o.headers instanceof Headers) {
+    o.headers.forEach((v, k) => {
+      baseH[k] = v;
+    });
+  } else if (o.headers && typeof o.headers === "object") {
+    Object.assign(baseH, o.headers);
+  }
+  o.headers = baseH;
+  const r = await fetch(url, o);
+  if ((r.status === 401 || r.status === 403) && !String(url).includes("/auth/login")) {
+    clearAuth();
+    if ((window.location.hash || "").split("?")[0] !== "#login") {
+      location.hash = "#login";
+    }
+  }
+  return r;
+}
+
+/** 已登录请求后触发浏览器下载（用于原 `target=_blank` 的导出，需带 Bearer） */
+async function downloadBlobFromApiUrl(url, filename) {
+  const r = await apiFetch(url);
+  if (!r.ok) {
+    window.alert(`下载失败（HTTP ${r.status}）`);
+    return;
+  }
+  const blob = await r.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(href);
+}
+
 const IMPORT_LAST_BATCH_KEY = "smart_route_import_last_batch";
 const IMPORT_LIST_VIEW_TYPE_KEY = "smart_route_import_list_view_type";
 const IMPORT_LIST_RANGE_FROM_KEY = "smart_route_data_list_from";
@@ -1100,7 +1177,7 @@ async function fetchImportBatchPage(datasetType, batchId, page, pageSize, storeN
   });
   const s = (storeName || "").trim();
   if (s) q.set("store_name", s);
-  const r = await fetch(`${API_BASE}/import-batch?${q}`);
+  const r = await apiFetch(`${API_BASE}/import-batch?${q}`);
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`HTTP ${r.status} ${t.slice(0, 200)}`);
@@ -1128,7 +1205,7 @@ async function fetchImportActivePage(
   if (wh) q.set("warehouse_name", wh);
   const st = (storeName || "").trim();
   if (st) q.set("store_name", st);
-  const r = await fetch(`${API_BASE}/import-active?${q}`);
+  const r = await apiFetch(`${API_BASE}/import-active?${q}`);
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`HTTP ${r.status} ${t.slice(0, 200)}`);
@@ -1338,7 +1415,7 @@ function bindImportListInteractions(wrap) {
       }
       void (async () => {
         try {
-          const r = await fetch(`${API_BASE}/manual/backfill`, {
+          const r = await apiFetch(`${API_BASE}/manual/backfill`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ route_date_from: dateFrom, route_date_to: dateTo }),
@@ -1528,6 +1605,314 @@ function syncNav() {
     const r = el.getAttribute("data-route");
     const active = base === r || (base === "#route-map" && r === "#result");
     el.classList.toggle("is-active", active);
+  });
+}
+
+function updateAdminNavFromUser(user) {
+  const li = document.getElementById("admin-nav-item");
+  if (li) li.hidden = !user || !user.is_admin;
+}
+
+function refreshHeaderAuth() {
+  const u = getAuthUser();
+  const w = document.getElementById("workspace-auth");
+  const lab = document.getElementById("auth-user-label");
+  const onLogin = (window.location.hash || "").split("?")[0] === "#login";
+  if (lab) lab.textContent = u && u.username ? u.username : "";
+  if (w) {
+    if (!getAuthToken() || onLogin) w.setAttribute("hidden", "");
+    else w.removeAttribute("hidden");
+  }
+}
+
+async function syncAuthMe() {
+  if (!getAuthToken()) {
+    updateAdminNavFromUser(null);
+    refreshHeaderAuth();
+    return;
+  }
+  const r = await apiFetch(`${API_BASE}/auth/me`);
+  if (r.ok) {
+    const u = await r.json();
+    setAuthUser(u);
+    updateAdminNavFromUser(u);
+  } else {
+    clearAuth();
+    updateAdminNavFromUser(null);
+  }
+  refreshHeaderAuth();
+}
+
+function bindAuthLogout() {
+  document.getElementById("auth-logout")?.addEventListener("click", () => {
+    clearAuth();
+    updateAdminNavFromUser(null);
+    refreshHeaderAuth();
+    location.hash = "#login";
+  });
+}
+
+function renderLogin() {
+  setWorkspaceTitle("登录");
+  document.title = `${getBrandDisplayName()} · 登录`;
+  const auth = document.getElementById("workspace-auth");
+  if (auth) auth.setAttribute("hidden", "");
+  const brandName = getBrandDisplayName();
+  const logoUrl = getBrandLogoUrlForDisplay();
+  app.innerHTML = `
+    <div class="login-card" role="region" aria-labelledby="login-system-name">
+      <header class="login-card__brand">
+        <img class="login-card__logo" width="72" height="72" alt="" decoding="async" id="login-brand-logo" />
+        <div class="login-card__brand-text">
+          <h1 class="login-card__system-name" id="login-system-name">${escapeHtml(brandName)}</h1>
+          <p class="login-card__tagline">智能排线工作台</p>
+        </div>
+      </header>
+      <div class="login-card__body">
+        <p class="login-card__hint">无账号请联系管理员在后台开通。</p>
+        <form id="login-form" class="login-form" autocomplete="on">
+          <div class="field">
+            <span class="field-label">用户名</span>
+            <input type="text" id="login-user" name="username" class="login-form__input" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <span class="field-label">密码</span>
+            <input type="password" id="login-pass" name="password" class="login-form__input" autocomplete="current-password" required />
+          </div>
+          <p id="login-msg" class="alert alert--error login-card__msg" style="display:none" role="alert"></p>
+          <button type="submit" class="btn btn--primary login-card__submit" id="login-submit">登录</button>
+        </form>
+      </div>
+    </div>`;
+  const logoEl = document.getElementById("login-brand-logo");
+  if (logoEl) logoEl.src = logoUrl;
+  document.getElementById("login-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const u = (document.getElementById("login-user")?.value || "").trim();
+    const p = (document.getElementById("login-pass")?.value || "");
+    const msg = document.getElementById("login-msg");
+    if (msg) {
+      msg.style.display = "none";
+      msg.textContent = "";
+    }
+    const r = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (msg) {
+        msg.style.display = "block";
+        msg.textContent = typeof j.detail === "string" ? j.detail : "登录失败";
+      }
+      return;
+    }
+    sessionStorage.setItem(AUTH_TOKEN_KEY, j.access_token);
+    if (j.user) {
+      setAuthUser(j.user);
+      updateAdminNavFromUser(j.user);
+      refreshHeaderAuth();
+    } else {
+      void syncAuthMe();
+    }
+    applyBrandingToShell();
+    location.hash = "#import";
+  });
+}
+
+function renderAdmin() {
+  setWorkspaceCrumb("智能排线");
+  setWorkspaceTitle("用户管理");
+  const u0 = getAuthUser();
+  if (!u0 || !u0.is_admin) {
+    app.innerHTML = `<p class="empty-hint">需要管理员权限。</p>`;
+    return;
+  }
+  app.innerHTML = `
+    <div class="page-head page-head--compact">
+      <p class="empty-hint" style="margin:0">仅管理员可创建或维护账号。自助注册与找回密码已关闭。</p>
+    </div>
+    <div class="toolbar" style="flex-wrap:wrap;align-items:flex-end;gap:12px">
+      <div class="field" style="min-width:120px">
+        <span class="field-label">用户名</span>
+        <input type="text" id="admin-new-user" placeholder="新登录名" />
+      </div>
+      <div class="field" style="min-width:120px">
+        <span class="field-label">初始密码</span>
+        <input type="text" id="admin-new-pass" placeholder="至少 1 个字符" />
+      </div>
+      <div class="field" style="min-width:80px">
+        <span class="field-label">管理员</span>
+        <label class="field-inline"><input type="checkbox" id="admin-new-is-admin" /> 是</label>
+      </div>
+      <button type="button" class="btn btn--primary" id="admin-btn-create">创建用户</button>
+    </div>
+    <div id="admin-msg" style="margin-top:8px"></div>
+    <div class="table-scroll" style="margin-top:16px">
+      <table class="data-table" id="admin-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>用户名</th>
+            <th>启用</th>
+            <th>管理员</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="admin-tbody"></tbody>
+      </table>
+    </div>
+    <div id="admin-modal" class="modal" hidden>
+      <div class="modal__backdrop" data-adm-close></div>
+      <div class="modal__dialog" role="dialog" aria-modal="true">
+        <h2 class="modal__title">重置密码</h2>
+        <p class="empty-hint" style="margin-top:0">用户 <span id="admin-rp-name"></span></p>
+        <div class="field">
+          <span class="field-label">新密码</span>
+          <input type="text" id="admin-rp-pass" />
+        </div>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--secondary" data-adm-close>取消</button>
+          <button type="button" class="btn btn--primary" id="admin-rp-ok">保存</button>
+        </div>
+      </div>
+    </div>`;
+
+  const tbody = document.getElementById("admin-tbody");
+  const adminMsg = document.getElementById("admin-msg");
+  const modal = document.getElementById("admin-modal");
+  let resetId = null;
+
+  const load = async () => {
+    if (!tbody) return;
+    const r = await apiFetch(`${API_BASE}/admin/users`);
+    if (!r.ok) {
+      if (adminMsg) adminMsg.innerHTML = `<div class="alert alert--error">加载失败（${r.status}）</div>`;
+      return;
+    }
+    const rows = await r.json();
+    if (!Array.isArray(rows)) return;
+    tbody.innerHTML = rows
+      .map(
+        (x) => `<tr data-uid="${x.id}">
+  <td>${x.id}</td>
+  <td>${escapeHtml(x.username)}</td>
+  <td><label><input type="checkbox" class="admin-chk-active" data-uid="${x.id}" ${x.is_active ? "checked" : ""} /></label></td>
+  <td><label><input type="checkbox" class="admin-chk-role" data-uid="${x.id}" ${x.is_admin ? "checked" : ""} /></label></td>
+  <td>
+    <button type="button" class="btn btn--secondary btn--sm admin-btn-rp" data-uid="${x.id}">重置密码</button>
+  </td>
+</tr>`,
+      )
+      .join("");
+  };
+
+  void load();
+
+  document.getElementById("admin-btn-create")?.addEventListener("click", async () => {
+    const username = (document.getElementById("admin-new-user")?.value || "").trim();
+    const password = document.getElementById("admin-new-pass")?.value || "";
+    const is_admin = !!document.getElementById("admin-new-is-admin")?.checked;
+    if (!adminMsg) return;
+    if (!username || !password) {
+      adminMsg.innerHTML = `<div class="alert alert--error">请填写用户名与密码</div>`;
+      return;
+    }
+    const r = await apiFetch(`${API_BASE}/admin/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, is_active: true, is_admin }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      adminMsg.innerHTML = `<div class="alert alert--error">${escapeHtml(
+        typeof d.detail === "string" ? d.detail : "创建失败",
+      )}</div>`;
+      return;
+    }
+    adminMsg.innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">已创建</div>`;
+    if (document.getElementById("admin-new-user")) document.getElementById("admin-new-user").value = "";
+    if (document.getElementById("admin-new-pass")) document.getElementById("admin-new-pass").value = "";
+    void load();
+  });
+
+  tbody?.addEventListener("change", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    const uid = t.getAttribute("data-uid");
+    if (!uid) return;
+    const id = parseInt(uid, 10);
+    if (t.classList.contains("admin-chk-active")) {
+      const r = await apiFetch(`${API_BASE}/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: t.checked }),
+      });
+      if (!r.ok) {
+        t.checked = !t.checked;
+        if (adminMsg) adminMsg.innerHTML = `<div class="alert alert--error">更新失败</div>`;
+      } else if (adminMsg) adminMsg.innerHTML = "";
+    }
+    if (t.classList.contains("admin-chk-role")) {
+      const r = await apiFetch(`${API_BASE}/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_admin: t.checked }),
+      });
+      if (!r.ok) {
+        t.checked = !t.checked;
+        if (adminMsg) adminMsg.innerHTML = `<div class="alert alert--error">更新失败</div>`;
+      } else {
+        const me = getAuthUser();
+        if (me && id === me.id) {
+          void syncAuthMe();
+        }
+        if (adminMsg) adminMsg.innerHTML = "";
+      }
+    }
+  });
+
+  tbody?.addEventListener("click", (ev) => {
+    const b = ev.target;
+    if (!(b instanceof HTMLElement)) return;
+    if (!b.classList.contains("admin-btn-rp")) return;
+    const uid = b.getAttribute("data-uid");
+    if (!uid) return;
+    resetId = parseInt(uid, 10);
+    const row = b.closest("tr");
+    const nameCell = row && row.querySelector("td:nth-child(2)");
+    const nm = nameCell ? nameCell.textContent : "";
+    const nameEl = document.getElementById("admin-rp-name");
+    if (nameEl) nameEl.textContent = String(nm);
+    const pi = document.getElementById("admin-rp-pass");
+    if (pi) pi.value = "";
+    if (modal) modal.removeAttribute("hidden");
+  });
+
+  modal?.querySelectorAll("[data-adm-close]").forEach((b) => {
+    b.addEventListener("click", () => {
+      if (modal) modal.setAttribute("hidden", "");
+    });
+  });
+  document.getElementById("admin-rp-ok")?.addEventListener("click", async () => {
+    if (resetId == null) return;
+    const p = (document.getElementById("admin-rp-pass")?.value || "").trim();
+    if (!p) {
+      if (adminMsg) adminMsg.innerHTML = `<div class="alert alert--error">请填写新密码</div>`;
+      return;
+    }
+    const r = await apiFetch(`${API_BASE}/admin/users/${resetId}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_password: p }),
+    });
+    if (r.ok) {
+      if (modal) modal.setAttribute("hidden", "");
+      if (adminMsg) adminMsg.innerHTML = `<div class="alert" style="background:#ecfdf5;border-color:#a7f3d0">密码已更新</div>`;
+    } else {
+      if (adminMsg) adminMsg.innerHTML = `<div class="alert alert--error">重置失败</div>`;
+    }
   });
 }
 
@@ -1838,6 +2223,31 @@ function route() {
   setWorkspaceCrumb("智能排线");
   const hash = window.location.hash || "#import";
   const path = hash.split("?")[0];
+  if (path === "#login") {
+    if (getAuthToken()) {
+      location.replace(`${location.pathname}${location.search}#import`);
+      return;
+    }
+    document.body.classList.add("app-auth--login");
+    setWorkspaceTitle("登录");
+    renderLogin();
+    syncNav();
+    refreshHeaderAuth();
+    return;
+  }
+  document.body.classList.remove("app-auth--login");
+  if (!getAuthToken()) {
+    location.hash = "#login";
+    return;
+  }
+  void syncAuthMe();
+  if (path === "#admin") {
+    renderAdmin();
+    syncNav();
+    refreshHeaderAuth();
+    refreshApiStatusBanner();
+    return;
+  }
   if (hash.startsWith("#route-map")) {
     renderRouteMap();
     setWorkspaceTitle("路线地图");
@@ -1875,6 +2285,7 @@ function route() {
     renderImport();
     setWorkspaceTitle("数据导入");
   }
+  refreshHeaderAuth();
   syncNav();
   refreshApiStatusBanner();
 }
@@ -2226,7 +2637,7 @@ function renderDiffAnalysis() {
     });
     if (warehouseName) q.set("warehouse_name", warehouseName);
     try {
-      const resp = await fetch(`${API_BASE}/diff-analysis/multi-vehicle-stores?${q}`);
+      const resp = await apiFetch(`${API_BASE}/diff-analysis/multi-vehicle-stores?${q}`);
       let data = {};
       try {
         data = await resp.json();
@@ -2480,7 +2891,7 @@ function renderImport() {
     const filename =
       datasetType === "system" ? "智能排线_导入模板_系统建议.xlsx" : "智能排线_导入模板_手动排线.xlsx";
     try {
-      const resp = await fetch(url);
+      const resp = await apiFetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
       const href = URL.createObjectURL(blob);
@@ -2513,7 +2924,7 @@ function renderImport() {
     formData.append("file", file);
     const importUrl = `${API_BASE}/import/${datasetType}`;
     try {
-      const resp = await fetch(importUrl, { method: "POST", body: formData });
+      const resp = await apiFetch(importUrl, { method: "POST", body: formData });
       if (!resp.ok) {
         const raw = await resp.text();
         let errPayload;
@@ -2652,7 +3063,7 @@ function renderResult() {
       const whQ = selectedWh.trim()
         ? `&warehouse_name=${encodeURIComponent(selectedWh.trim())}`
         : "";
-      const overviewResp = await fetch(
+      const overviewResp = await apiFetch(
         `${API_BASE}/compare/overview?route_date_from=${encodeURIComponent(
           routeFrom,
         )}&route_date_to=${encodeURIComponent(routeTo)}${whQ}`,
@@ -2662,7 +3073,7 @@ function renderResult() {
       overviewArea.innerHTML = overviewSection(overviewData);
       const whForRows = (document.getElementById("compareWarehouse")?.value || "").trim();
       const whRowsQ = whForRows ? `&warehouse_name=${encodeURIComponent(whForRows)}` : "";
-      const resultResp = await fetch(
+      const resultResp = await apiFetch(
         `${API_BASE}/compare/results?route_date_from=${encodeURIComponent(
           routeFrom,
         )}&route_date_to=${encodeURIComponent(
@@ -2728,7 +3139,7 @@ function renderResult() {
     overviewArea.innerHTML = "";
     tbody.innerHTML = "";
     try {
-      const runResp = await fetch(`${API_BASE}/compare/run`, {
+      const runResp = await apiFetch(`${API_BASE}/compare/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ route_date_from: routeFrom, route_date_to: routeTo, match_threshold: 0.5 }),
@@ -3135,7 +3546,7 @@ function renderRouteMap() {
   (async () => {
     let data;
     try {
-      const resp = await fetch(`${API_BASE}/compare/route-map/${rid}`);
+      const resp = await apiFetch(`${API_BASE}/compare/route-map/${rid}`);
       if (!resp.ok) {
         errEl.innerHTML = `<div class="alert alert--error">${resp.status === 404 ? "未找到该比对记录。" : `请求失败（${resp.status}）`}</div>`;
         return;
@@ -3634,7 +4045,7 @@ async function cpLoadList() {
   });
   if (CP.q) q.set("search", CP.q);
   try {
-    const r = await fetch(`${API_BASE}/customer-profiles?${q}`);
+    const r = await apiFetch(`${API_BASE}/customer-profiles?${q}`);
     const d = await r.json();
     if (!r.ok) {
       tbody.innerHTML = `<tr><td colspan="${CP_NCOL}" class="alert alert--error">加载失败</td></tr>`;
@@ -3860,7 +4271,7 @@ async function initNetMapPage() {
   let totalAll = 0;
   let items = [];
   try {
-    const r = await fetch(`${API_BASE}/warehouse-base?${netMapWarehouseListQuery()}`);
+    const r = await apiFetch(`${API_BASE}/warehouse-base?${netMapWarehouseListQuery()}`);
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (errEl) {
@@ -4011,7 +4422,7 @@ function renderNetMap() {
   void (async function netMapBootstrap() {
     let fo2 = { group_name: [], brand: [] };
     try {
-      const r0 = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+      const r0 = await apiFetch(`${API_BASE}/warehouse-base/filter-options`);
       if (r0.ok) fo2 = await r0.json();
     } catch {
       /* 忽略 */
@@ -4317,7 +4728,7 @@ async function wbUploadBusinessBrandLogosAfterSave(saved) {
     if (!file) continue;
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(`${API_BASE}/warehouse-base/business-brands/${id}/file`, {
+    const r = await apiFetch(`${API_BASE}/warehouse-base/business-brands/${id}/file`, {
       method: "POST",
       body: fd,
     });
@@ -4383,11 +4794,7 @@ function wbBuildFilterQuery() {
 }
 
 function wbUpdateExportLink() {
-  const a = document.getElementById("wb-export");
-  if (a) {
-    const q = wbBuildFilterQuery().toString();
-    a.href = q ? `${API_BASE}/warehouse-base/export?${q}` : `${API_BASE}/warehouse-base/export`;
-  }
+  /* 导出已改为带 Token 的点击下载，筛选在点击「导出」时读取当前表单 */
 }
 
 function wbComboboxLabel(row) {
@@ -4635,7 +5042,7 @@ function buildWarehouseBasePageHtml(fo, lim) {
       <button type="button" class="btn btn--secondary" id="wb-geocode-bulk" title="按当前筛选，对无「仓库坐标」的仓库用地址调高德并落库，最多 3000 条">
         经纬度补缺
       </button>
-      <a class="btn btn--secondary" id="wb-export" href="${API_BASE}/warehouse-base/export" target="_blank" rel="noopener">导出 Excel</a>
+      <button type="button" class="btn btn--secondary" id="wb-export">导出 Excel</button>
       <div class="field field--file-import">
         <span class="field-label">导入</span>
         <input type="file" id="wb-file" class="input-file" accept=".xlsx,.xls" />
@@ -4708,7 +5115,7 @@ function wbRepaintFilterSelects(fo) {
 
 async function wbReloadFilterOptions() {
   try {
-    const r = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+    const r = await apiFetch(`${API_BASE}/warehouse-base/filter-options`);
     if (!r.ok) return;
     const fo = await r.json();
     wbSyncFiltersFromInputs();
@@ -4779,7 +5186,7 @@ async function wbLoadList() {
   q.set("skip", String(WB.skip));
   q.set("limit", String(WB.limit));
   try {
-    const r = await fetch(`${API_BASE}/warehouse-base?${q}`);
+    const r = await apiFetch(`${API_BASE}/warehouse-base?${q}`);
     const d = await r.json();
     if (!r.ok) {
       tbody.innerHTML = `<tr><td colspan="${WB_NCOL}" class="alert alert--error">加载失败</td></tr>`;
@@ -4812,6 +5219,12 @@ async function wbLoadList() {
 
 function bindWarehouseBaseEvents() {
   wbInitWarehouseCombobox();
+  document.getElementById("wb-export")?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    const q = wbBuildFilterQuery().toString();
+    const url = q ? `${API_BASE}/warehouse-base/export?${q}` : `${API_BASE}/warehouse-base/export`;
+    void downloadBlobFromApiUrl(url, "仓库基础数据.xlsx");
+  });
   document.getElementById("wb-search")?.addEventListener("click", () => {
     wbSyncFiltersFromInputs();
     WB.skip = 0;
@@ -4861,7 +5274,7 @@ function bindWarehouseBaseEvents() {
     fd.append("file", file);
     const el = document.getElementById("wb-msg");
     if (el) el.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
-    const r = await fetch(
+    const r = await apiFetch(
       `${API_BASE}/warehouse-base/import?${new URLSearchParams({ data_source: "页面导入" })}`,
       { method: "POST", body: fd },
     );
@@ -4886,7 +5299,7 @@ function bindWarehouseBaseEvents() {
     const el = document.getElementById("wb-msg");
     if (el) el.innerHTML = `<div class="alert alert--muted">正在按地址补全经纬度（当前筛选，仅补缺）…</div>`;
     try {
-      const r = await fetch(`${API_BASE}/warehouse-base/batch-geocode?${q}`, { method: "POST" });
+      const r = await apiFetch(`${API_BASE}/warehouse-base/batch-geocode?${q}`, { method: "POST" });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         if (el) {
@@ -4951,7 +5364,7 @@ function bindWarehouseBaseEvents() {
     const url = isEdit
       ? `${API_BASE}/warehouse-base/${WB.editId}`
       : `${API_BASE}/warehouse-base`;
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: isEdit ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -4987,7 +5400,7 @@ function bindWarehouseBaseEvents() {
     const id = t.getAttribute("data-id");
     if (t.getAttribute("data-wb") === "edit" && id) {
       WB.editId = parseInt(id, 10);
-      const r = await fetch(`${API_BASE}/warehouse-base/${id}`);
+      const r = await apiFetch(`${API_BASE}/warehouse-base/${id}`);
       const it = await r.json();
       if (!r.ok) return;
       const title = document.getElementById("wb-modal-title");
@@ -4997,7 +5410,7 @@ function bindWarehouseBaseEvents() {
     }
     if (t.getAttribute("data-wb") === "del" && id) {
       if (!window.confirm("确定删除该条仓库主数据？")) return;
-      const r2 = await fetch(`${API_BASE}/warehouse-base/${id}`, { method: "DELETE" });
+      const r2 = await apiFetch(`${API_BASE}/warehouse-base/${id}`, { method: "DELETE" });
       if (r2.ok) {
         void wbAfterDataMutation();
       } else {
@@ -5027,7 +5440,7 @@ function renderWarehouseBase() {
       warehouse_type: [],
     };
     try {
-      const r = await fetch(`${API_BASE}/warehouse-base/filter-options`);
+      const r = await apiFetch(`${API_BASE}/warehouse-base/filter-options`);
       if (r.ok) fo = { ...fo, ...(await r.json()) };
     } catch (_e) {
       /* 忽略，仍渲染空下拉 */
@@ -5052,7 +5465,7 @@ function renderCustomerProfiles() {
       <button type="button" class="btn btn--secondary" id="cp-search">查询</button>
       <button type="button" class="btn btn--secondary" id="cp-refresh">刷新</button>
       <button type="button" class="btn btn--primary" id="cp-new">新增</button>
-      <a class="btn btn--secondary" id="cp-export" href="${API_BASE}/customer-profiles/export" target="_blank" rel="noopener">导出 Excel</a>
+      <button type="button" class="btn btn--secondary" id="cp-export">导出 Excel</button>
       <div class="field field--file-import">
         <span class="field-label">导入</span>
         <input type="file" id="cp-file" class="input-file" accept=".xlsx,.xls" />
@@ -5106,6 +5519,10 @@ function renderCustomerProfiles() {
     CP.skip = 0;
     void cpLoadList();
   });
+  document.getElementById("cp-export")?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    void downloadBlobFromApiUrl(`${API_BASE}/customer-profiles/export`, "客户列表.xlsx");
+  });
   document.getElementById("cp-refresh")?.addEventListener("click", () => {
     void cpLoadList();
   });
@@ -5136,7 +5553,7 @@ function renderCustomerProfiles() {
     fd.append("file", file);
     const el = document.getElementById("cp-msg");
     if (el) el.innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
-    const r = await fetch(
+    const r = await apiFetch(
       `${API_BASE}/customer-list/import?${new URLSearchParams({ data_source: "页面导入" })}`,
       { method: "POST", body: fd },
     );
@@ -5177,7 +5594,7 @@ function renderCustomerProfiles() {
     const url = isEdit
       ? `${API_BASE}/customer-profiles/${CP.editId}`
       : `${API_BASE}/customer-profiles`;
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: isEdit ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -5204,7 +5621,7 @@ function renderCustomerProfiles() {
     const id = t.getAttribute("data-id");
     if (t.getAttribute("data-cp") === "edit" && id) {
       CP.editId = parseInt(id, 10);
-      const r = await fetch(`${API_BASE}/customer-profiles/${id}`);
+      const r = await apiFetch(`${API_BASE}/customer-profiles/${id}`);
       const it = await r.json();
       if (!r.ok) return;
       const title = document.getElementById("cp-modal-title");
@@ -5218,7 +5635,7 @@ function renderCustomerProfiles() {
     }
     if (t.getAttribute("data-cp") === "del" && id) {
       if (!window.confirm("确定删除该条客户基础资料？")) return;
-      const r2 = await fetch(`${API_BASE}/customer-profiles/${id}`, { method: "DELETE" });
+      const r2 = await apiFetch(`${API_BASE}/customer-profiles/${id}`, { method: "DELETE" });
       if (r2.ok) {
         void cpLoadList();
       } else {
@@ -5254,7 +5671,7 @@ async function smLoadCoord() {
   });
   if (SM.cQ) q.set("search", SM.cQ);
   try {
-    const r = await fetch(`${API_BASE}/store-coordinates?${q}`);
+    const r = await apiFetch(`${API_BASE}/store-coordinates?${q}`);
     const d = await r.json();
     if (!r.ok) {
       wrap.innerHTML = `<tr><td colspan="6" class="alert alert--error">加载失败</td></tr>`;
@@ -5293,7 +5710,7 @@ async function smLoadPair() {
   const q = new URLSearchParams({ skip: String(SM.pSkip), limit: String(SM.limit) });
   if (SM.pQ) q.set("search", SM.pQ);
   try {
-    const r = await fetch(`${API_BASE}/store-pair-distances?${q}`);
+    const r = await apiFetch(`${API_BASE}/store-pair-distances?${q}`);
     const d = await r.json();
     if (!r.ok) {
       wrap.innerHTML = `<tr><td colspan="5" class="alert alert--error">加载失败</td></tr>`;
@@ -5354,7 +5771,7 @@ function renderStoreMaster() {
         <button type="button" class="btn btn--secondary" id="sm-c-search">查询</button>
         <button type="button" class="btn btn--secondary" id="sm-c-refresh">刷新</button>
         <button type="button" class="btn btn--primary" id="sm-c-new">新增坐标</button>
-        <a class="btn btn--secondary" id="sm-export" href="${API_BASE}/store-master/export" target="_blank" rel="noopener">导出 Excel</a>
+        <button type="button" class="btn btn--secondary" id="sm-export">导出 Excel</button>
         <div class="field field--file-import">
           <span class="field-label">导入</span>
           <input type="file" id="sm-c-file" class="input-file" accept=".xlsx,.xls" />
@@ -5392,7 +5809,7 @@ function renderStoreMaster() {
         <button type="button" class="btn btn--secondary" id="sm-p-search">查询</button>
         <button type="button" class="btn btn--secondary" id="sm-p-refresh">刷新</button>
         <button type="button" class="btn btn--primary" id="sm-p-new">新增有向边</button>
-        <a class="btn btn--secondary" href="${API_BASE}/store-master/export" target="_blank" rel="noopener">导出 Excel</a>
+        <button type="button" class="btn btn--secondary" id="sm-export-panel">导出 Excel</button>
         <div class="field field--file-import">
           <span class="field-label">导入</span>
           <input type="file" id="sm-p-file" class="input-file" accept=".xlsx,.xls" />
@@ -5422,6 +5839,15 @@ function renderStoreMaster() {
     </div>
     <div id="sm-msg" style="margin-top:12px"></div>`;
   smRefreshVisibility();
+  const smDoExport = (ev) => {
+    ev.preventDefault();
+    void downloadBlobFromApiUrl(
+      `${API_BASE}/store-master/export`,
+      "智能排线_仓店距离与门店坐标.xlsx",
+    );
+  };
+  document.getElementById("sm-export")?.addEventListener("click", smDoExport);
+  document.getElementById("sm-export-panel")?.addEventListener("click", smDoExport);
   document.getElementById("sm-tab-coord")?.addEventListener("click", () => {
     SM.tab = "coord";
     smRefreshVisibility();
@@ -5473,7 +5899,7 @@ function renderStoreMaster() {
     const url = SM.editCoordId
       ? `${API_BASE}/store-coordinates/${SM.editCoordId}`
       : `${API_BASE}/store-coordinates`;
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: SM.editCoordId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -5521,7 +5947,7 @@ function renderStoreMaster() {
     const url = SM.editPairId
       ? `${API_BASE}/store-pair-distances/${SM.editPairId}`
       : `${API_BASE}/store-pair-distances`;
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: SM.editPairId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -5551,7 +5977,7 @@ function renderStoreMaster() {
     const fd = new FormData();
     fd.append("file", file);
     document.getElementById("sm-msg").innerHTML = `<div class="alert alert--muted">正在上传…</div>`;
-    const r = await fetch(`${API_BASE}/store-master/import?data_source=页面导入`, { method: "POST", body: fd });
+    const r = await apiFetch(`${API_BASE}/store-master/import?data_source=页面导入`, { method: "POST", body: fd });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
       document.getElementById("sm-msg").innerHTML = `<div class="alert alert--error">${escapeHtml(
@@ -5579,7 +6005,7 @@ function renderStoreMaster() {
     const id = t.getAttribute("data-id");
     if (t.getAttribute("data-sm") === "ec" && id) {
       SM.editCoordId = parseInt(id, 10);
-      const r = await fetch(`${API_BASE}/store-coordinates/${id}`);
+      const r = await apiFetch(`${API_BASE}/store-coordinates/${id}`);
       const it = await r.json();
       if (!r.ok) return;
       document.getElementById("sm-cfn").value = it.store_name;
@@ -5590,7 +6016,7 @@ function renderStoreMaster() {
     }
     if (t.getAttribute("data-sm") === "dc" && id) {
       if (!window.confirm("确定删除该门店坐标？")) return;
-      const r2 = await fetch(`${API_BASE}/store-coordinates/${id}`, { method: "DELETE" });
+      const r2 = await apiFetch(`${API_BASE}/store-coordinates/${id}`, { method: "DELETE" });
       if (r2.ok) {
         smLoadCoord();
       } else {
@@ -5607,7 +6033,7 @@ function renderStoreMaster() {
     const id = t.getAttribute("data-id");
     if (t.getAttribute("data-sm") === "ep" && id) {
       SM.editPairId = parseInt(id, 10);
-      const r = await fetch(`${API_BASE}/store-pair-distances/${id}`);
+      const r = await apiFetch(`${API_BASE}/store-pair-distances/${id}`);
       const it = await r.json();
       if (!r.ok) return;
       document.getElementById("sm-pff").value = it.store_from;
@@ -5617,7 +6043,7 @@ function renderStoreMaster() {
     }
     if (t.getAttribute("data-sm") === "dp" && id) {
       if (!window.confirm("确定删除该仓店距离？")) return;
-      const r2 = await fetch(`${API_BASE}/store-pair-distances/${id}`, { method: "DELETE" });
+      const r2 = await apiFetch(`${API_BASE}/store-pair-distances/${id}`, { method: "DELETE" });
       if (r2.ok) smLoadPair();
     }
   });
@@ -5627,5 +6053,6 @@ function renderStoreMaster() {
 
 initBrandIdentityModal();
 applyBrandingToShell();
+bindAuthLogout();
 window.addEventListener("hashchange", route);
 route();

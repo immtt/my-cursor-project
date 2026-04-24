@@ -1,7 +1,7 @@
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class CompareRequest(BaseModel):
@@ -179,3 +179,41 @@ class WarehouseBaseUpdate(_WarehouseBaseOptionalOnly):
     address: Optional[str] = None
     brand: Optional[str] = None
     business_brands: Optional[List[BusinessBrandItem]] = None
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserPublic(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: int
+    username: str
+    is_active: bool
+    is_admin: bool
+    created_at: Optional[datetime] = None
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: UserPublic
+
+
+class AdminUserCreate(BaseModel):
+    username: str
+    password: str = Field(min_length=1)
+    is_active: bool = True
+    is_admin: bool = False
+
+
+class AdminUserPatch(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+
+class AdminResetPassword(BaseModel):
+    new_password: str = Field(min_length=1)

@@ -1,10 +1,8 @@
 from io import BytesIO
 
 import pytest
-from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from app.main import app
 from app.services.import_service import build_import_template_xlsx
 
 
@@ -50,9 +48,8 @@ def test_build_import_template_invalid_type():
         build_import_template_xlsx("other")
 
 
-def test_api_import_template_get_ok():
-    client = TestClient(app)
-    r = client.get("/api/import-template", params={"dataset_type": "system"})
+def test_api_import_template_get_ok(client_api_authed):
+    r = client_api_authed.get("/api/import-template", params={"dataset_type": "system"})
     assert r.status_code == 200
     assert "spreadsheetml" in (r.headers.get("content-type") or "")
     wb = load_workbook(BytesIO(r.content))

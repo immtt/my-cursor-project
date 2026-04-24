@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -300,3 +300,14 @@ class WarehouseBase(Base):
         order_by="WarehouseBusinessBrand.sort_order, WarehouseBusinessBrand.id",
         cascade="all, delete-orphan",
     )
+
+
+class AppUser(Base):
+    __tablename__ = "app_user"
+
+    id = Column(Integer, primary_key=True, index=True, comment="主键")
+    username = Column(String(64), unique=True, nullable=False, index=True, comment="登录名")
+    password_hash = Column(String(255), nullable=False, comment="密码 hash")
+    is_active = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    is_admin = Column(Boolean, nullable=False, default=False, comment="是否管理员")
+    created_at = Column(DateTime, server_default=func.now(), comment="创建时间")

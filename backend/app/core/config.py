@@ -23,6 +23,19 @@ def _default_gaode_mock() -> bool:
     return os.getenv("GAODE_MOCK_ENABLED", "true").lower() in ("1", "true", "yes")
 
 
+def _default_jwt_secret() -> str:
+    return (os.getenv("AUTH_JWT_SECRET") or "").strip()
+
+
+def _default_jwt_expires_minutes() -> int:
+    raw = (os.getenv("AUTH_JWT_EXPIRES_MINUTES") or "1440").strip()
+    try:
+        n = int(raw)
+        return max(5, min(n, 60 * 24 * 30))
+    except ValueError:
+        return 1440
+
+
 class Settings(BaseModel):
     app_name: str = "Smart Route Compare API"
     database_url: str = Field(default_factory=_default_database_url)
@@ -30,6 +43,12 @@ class Settings(BaseModel):
     amap_key: str = Field(default_factory=lambda: (os.getenv("AMAP_KEY") or "").strip())
     amap_security_key: str = Field(
         default_factory=lambda: (os.getenv("AMAP_SECURITY_KEY") or "").strip()
+    )
+    auth_jwt_secret: str = Field(default_factory=_default_jwt_secret)
+    auth_jwt_expires_minutes: int = Field(default_factory=_default_jwt_expires_minutes)
+    bootstrap_admin_user: str = Field(default_factory=lambda: (os.getenv("BOOTSTRAP_ADMIN_USER") or "").strip())
+    bootstrap_admin_pass: str = Field(
+        default_factory=lambda: (os.getenv("BOOTSTRAP_ADMIN_PASS") or "").strip()
     )
 
 

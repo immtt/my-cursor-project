@@ -5,11 +5,14 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.api.auth_public import router as auth_public_router
 from app.api.routes import router
 from app.db.import_dedupe import dedupe_import_tables_and_apply_unique
 from app.db.session import Base, engine, ensure_sqlite_schema, ensure_warehouse_code_nullable, get_db
 import app.models.entities  # noqa: F401  — 全量注册 ORM 表（含新表）供 create_all
+from app.api.deps_auth import verify_bearer_token
 from app.middleware.dev_cors import DevCorsASGIMiddleware
+from app.services.auth_service import maybe_bootstrap_first_admin
 from app.services.import_service import fetch_active_import_page, fetch_import_batch_page
 
 log = logging.getLogger(__name__)
@@ -17,6 +20,7 @@ log = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 ensure_warehouse_code_nullable()
 ensure_sqlite_schema()
+maybe_bootstrap_first_admin()
 try:
     _dedupe_stats = dedupe_import_tables_and_apply_unique(engine)
     if any(_dedupe_stats.values()):
@@ -25,11 +29,12 @@ except Exception:
     log.exception("import 表去重或唯一索引创建失败，请检查数据库后重试，或执行 scripts/dedupe_import_tables.py")
 
 _core = FastAPI(title="Smart Route Compare API")
+_core.include_router(auth_public_router, prefix="/api")
 _core.include_router(router, prefix="/api")
 
 
 # 与 import-template 同一策略的独立路径；挂在此处保证 uvicorn 入口 app.main:app 必含本 GET（若 openapi 无本 path，即未重载到当前文件）
-@_core.get("/api/import-batch")
+@_core.get("/api/import-batch", dependencies=[Depends(verify_bearer_token)])
 def api_import_batch(
     dataset_type: str = Query(..., description="system | manual"),
     batch_id: str = Query(..., description="导入接口返回的 batch_id"),
@@ -48,7 +53,7 @@ def api_import_batch(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@_core.get("/api/import-active")
+@_core.get("/api/import-active", dependencies=[Depends(verify_bearer_token)])
 def api_import_active(
     dataset_type: str = Query(..., description="system | manual"),
     route_date_from: date = Query(..., description="排线日期起 YYYY-MM-DD（含）"),

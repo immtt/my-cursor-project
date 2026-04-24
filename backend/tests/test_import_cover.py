@@ -4,10 +4,8 @@ import tempfile
 from datetime import date
 
 import pytest
-from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
-from app.main import app
 from app.models.entities import ManualRoute, SysSuggest
 from app.services.gaode_service import backfill_manual_routes_by_batch
 from app.services.import_service import (
@@ -282,9 +280,8 @@ def test_fetch_import_batch_page_invalid_page_size(db_session):
         fetch_import_batch_page(db_session, "system", bid, 1, 10)
 
 
-def test_api_import_batch_rejects_bad_page_size():
-    client = TestClient(app)
-    r = client.get(
+def test_api_import_batch_rejects_bad_page_size(client_api_authed):
+    r = client_api_authed.get(
         "/api/import-batch",
         params={"dataset_type": "system", "batch_id": "x", "page_size": 10},
     )
@@ -447,9 +444,8 @@ def test_fetch_active_import_page_rejects_inverted_range(db_session):
         )
 
 
-def test_api_import_active_rejects_inverted_dates():
-    client = TestClient(app)
-    r = client.get(
+def test_api_import_active_rejects_inverted_dates(client_api_authed):
+    r = client_api_authed.get(
         "/api/import-active",
         params={
             "dataset_type": "system",
@@ -500,9 +496,8 @@ def test_backfill_manual_routes_by_batch_sets_estimates(db_session):
     assert json.loads(row.delivery_store_order) == ["门店甲"]
 
 
-def test_api_manual_backfill_unknown_batch_returns_zero():
-    client = TestClient(app)
-    r = client.post("/api/manual/backfill", json={"batch_id": "__no_such_batch__"})
+def test_api_manual_backfill_unknown_batch_returns_zero(client_api_authed):
+    r = client_api_authed.post("/api/manual/backfill", json={"batch_id": "__no_such_batch__"})
     assert r.status_code == 200
     data = r.json()
     assert data["updated"] == 0
@@ -510,15 +505,13 @@ def test_api_manual_backfill_unknown_batch_returns_zero():
     assert data["failures"] == []
 
 
-def test_api_manual_backfill_rejects_neither_batch_nor_range():
-    client = TestClient(app)
-    r = client.post("/api/manual/backfill", json={})
+def test_api_manual_backfill_rejects_neither_batch_nor_range(client_api_authed):
+    r = client_api_authed.post("/api/manual/backfill", json={})
     assert r.status_code == 422
 
 
-def test_api_manual_backfill_by_date_range_updates_zero_when_empty():
-    client = TestClient(app)
-    r = client.post(
+def test_api_manual_backfill_by_date_range_updates_zero_when_empty(client_api_authed):
+    r = client_api_authed.post(
         "/api/manual/backfill",
         json={"route_date_from": "2099-01-01", "route_date_to": "2099-01-31"},
     )

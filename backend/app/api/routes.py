@@ -12,8 +12,10 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Uplo
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
+from app.api.admin_routes import admin_router
+from app.api.deps_auth import get_current_user, verify_bearer_token
 from app.db.session import get_db
-from app.models.entities import CompareRunLog
+from app.models.entities import AppUser, CompareRunLog
 from app.schemas.requests import (
     CompareRequest,
     CustomerProfileCreate,
@@ -25,6 +27,7 @@ from app.schemas.requests import (
     StoreCoordinateUpdate,
     StorePairDistanceCreate,
     StorePairDistanceUpdate,
+    UserPublic,
 )
 from app.services.compare_service import overview, refresh_compare_after_import, run_compare
 from app.services.diff_analysis_service import list_multi_vehicle_stores
@@ -72,7 +75,17 @@ from app.services.store_master_service import (
     update_store_pair_distance,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_bearer_token)])
+
+
+@router.get("/auth/me", response_model=UserPublic)
+def auth_me(user: AppUser = Depends(get_current_user)):
+    return UserPublic.model_validate(user)
+
+
+@router.post("/auth/logout")
+def auth_logout():
+    return {"ok": True}
 
 
 # 路径不可使用 /import/template 或 /import/rows：POST /import/{dataset_type} 会先匹配
@@ -735,3 +748,6 @@ async def api_store_master_import(
     finally:
         os.remove(tmp_path)
     return {"message": "import finished", "stats": stats}
+
+
+router.include_router(admin_router, prefix="/admin", tags=["admin"])

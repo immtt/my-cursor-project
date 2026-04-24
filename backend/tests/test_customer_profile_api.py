@@ -8,8 +8,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app.main as app_main
+from app.api.deps_auth import verify_bearer_token
 from app.db.session import Base, get_db
 from app.models import entities  # noqa: F401  — 注册表
+from app.models.entities import AppUser
+from app.services.auth_service import hash_password
+from starlette.requests import Request
 
 
 def _ephemeral_client():
@@ -27,7 +31,26 @@ def _ephemeral_client():
         finally:
             db.close()
 
+    def _verify_bypass(request: Request) -> None:
+        if request.method == "OPTIONS":
+            return
+        request.state.user_id = 1
+
     app_main._core.dependency_overrides[get_db] = _get_db
+    app_main._core.dependency_overrides[verify_bearer_token] = _verify_bypass
+    seed = TestingLocal()
+    try:
+        seed.add(
+            AppUser(
+                username="cp_e2e",
+                password_hash=hash_password("x"),
+                is_active=True,
+                is_admin=False,
+            )
+        )
+        seed.commit()
+    finally:
+        seed.close()
     # 直接测 FastAPI 应用，避免 CORS 中间件对 response body 的边界问题
     client = TestClient(app_main._core)
     return client, db_file

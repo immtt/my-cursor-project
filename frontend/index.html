@@ -59,6 +59,9 @@
                   >客户基础数据</a
                 >
               </li>
+              <li id="admin-nav-item" hidden>
+                <a class="sidebar-nav__link nav-tab" href="#admin" data-route="#admin">用户管理</a>
+              </li>
             </ul>
           </div>
           <div class="nav-group" aria-labelledby="nav-l1-netplan">
@@ -87,8 +90,16 @@
       <div class="app-main">
         <div id="api-status-banner" class="api-status-banner" hidden></div>
         <header class="workspace-header">
-          <p class="workspace-header__crumb" id="workspace-l1-crumb">智能排线</p>
-          <p class="workspace-header__title" id="workspace-page-title">工作台</p>
+          <div class="workspace-header__row">
+            <div class="workspace-header__titles">
+              <p class="workspace-header__crumb" id="workspace-l1-crumb">智能排线</p>
+              <p class="workspace-header__title" id="workspace-page-title">工作台</p>
+            </div>
+            <div class="workspace-header__auth" id="workspace-auth" hidden>
+              <span class="workspace-header__user" id="auth-user-label" aria-label="当前用户"></span>
+              <button type="button" class="btn btn--secondary btn--sm" id="auth-logout">退出</button>
+            </div>
+          </div>
         </header>
         <main id="app" class="main-card" aria-live="polite"></main>
       </div>
