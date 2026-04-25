@@ -169,6 +169,11 @@
         </button>
       </div>
     </div>
+    <!--
+      生产环境（Nginx/Apache 把 https://你的域名/api 反代到后端，与页面同域）：
+      取消下面一行注释，否则浏览器会按默认去请求「当前主机:8080」，公网常连不上 API。
+    -->
+    <!-- <script>window.__API_ORIGIN__ = location.origin;</script> -->
     <script src="./amap-config.js"></script>
     <script src="./src/main.js"></script>
   </body>
