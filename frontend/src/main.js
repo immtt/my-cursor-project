@@ -29,6 +29,17 @@ function inferApiOrigin() {
 const API_ORIGIN = inferApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
 
+/** 将地址栏中 `#/xxx` 规范为 `#xxx`，与侧栏 `href="#import"` 等一致，避免 `/#/login` 时路由不命中 */
+function normalizeHashPathSegment(seg) {
+  const s = (seg || "").split("?")[0];
+  if (s.startsWith("#/") && s.length > 2) return `#${s.slice(2)}`;
+  return s;
+}
+
+function currentRoutePath() {
+  return normalizeHashPathSegment((window.location.hash || "#import").split("?")[0]);
+}
+
 const AUTH_TOKEN_KEY = "smart_route_jwt";
 const AUTH_ME_KEY = "smart_route_me";
 
@@ -80,7 +91,7 @@ async function apiFetch(url, options = {}) {
   const r = await fetch(url, o);
   if ((r.status === 401 || r.status === 403) && !String(url).includes("/auth/login")) {
     clearAuth();
-    if ((window.location.hash || "").split("?")[0] !== "#login") {
+    if (currentRoutePath() !== "#login") {
       location.hash = "#login";
     }
   }
@@ -1591,7 +1602,7 @@ async function refreshApiStatusBanner() {
 
 function routeMapIdFromHash() {
   const h = window.location.hash || "";
-  if (!h.startsWith("#route-map")) return null;
+  if (currentRoutePath() !== "#route-map") return null;
   const q = h.indexOf("?");
   if (q === -1) return null;
   const id = new URLSearchParams(h.slice(q + 1)).get("id");
@@ -1599,8 +1610,7 @@ function routeMapIdFromHash() {
 }
 
 function syncNav() {
-  const raw = window.location.hash || "#import";
-  const base = raw.split("?")[0];
+  const base = currentRoutePath();
   document.querySelectorAll(".nav-tab").forEach((el) => {
     const r = el.getAttribute("data-route");
     const active = base === r || (base === "#route-map" && r === "#result");
@@ -1617,7 +1627,7 @@ function refreshHeaderAuth() {
   const u = getAuthUser();
   const w = document.getElementById("workspace-auth");
   const lab = document.getElementById("auth-user-label");
-  const onLogin = (window.location.hash || "").split("?")[0] === "#login";
+  const onLogin = currentRoutePath() === "#login";
   if (lab) lab.textContent = u && u.username ? u.username : "";
   if (w) {
     if (!getAuthToken() || onLogin) w.setAttribute("hidden", "");
@@ -2222,7 +2232,7 @@ function route() {
   _refetchDiffAnalysis = null;
   setWorkspaceCrumb("智能排线");
   const hash = window.location.hash || "#import";
-  const path = hash.split("?")[0];
+  const path = currentRoutePath();
   if (path === "#login") {
     if (getAuthToken()) {
       location.replace(`${location.pathname}${location.search}#import`);
@@ -2248,7 +2258,7 @@ function route() {
     refreshApiStatusBanner();
     return;
   }
-  if (hash.startsWith("#route-map")) {
+  if (path === "#route-map") {
     renderRouteMap();
     setWorkspaceTitle("路线地图");
   } else if (path === "#net-map") {
@@ -2259,24 +2269,24 @@ function route() {
     setWorkspaceCrumb("仓网规划");
     renderWarehouseBase();
     setWorkspaceTitle("仓库基础数据");
-  } else if (hash === "#import") {
+  } else if (path === "#import") {
     renderImport();
     setWorkspaceTitle("数据导入");
-  } else if (hash === "#diff-analysis") {
+  } else if (path === "#diff-analysis") {
     renderDiffAnalysis();
     setWorkspaceTitle("差异分析");
-  } else if (hash === "#store-master") {
+  } else if (path === "#store-master") {
     renderStoreMaster();
     setWorkspaceTitle("仓店距离");
-  } else if (hash === "#customer-profiles") {
+  } else if (path === "#customer-profiles") {
     renderCustomerProfiles();
     setWorkspaceTitle("客户基础数据");
   } else if (path === "#brand-identity") {
     setWorkspaceCrumb("仓网规划");
     renderBrandIdentity();
     setWorkspaceTitle("品牌标识");
-  } else if (hash === "#compare" || hash === "#result") {
-    if (hash === "#compare") {
+  } else if (path === "#compare" || path === "#result") {
+    if (path === "#compare") {
       history.replaceState(null, "", `${location.pathname}${location.search}#result`);
     }
     renderResult();
