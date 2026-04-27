@@ -51,6 +51,7 @@ def get_results(route_date: date = Query(...), match_status: str | None = Query(
 @router.get("/compare/export")
 def export_results(route_date: date = Query(...), db: Session = Depends(get_db)):
     rows = fetch_results(db, route_date)
-    file_path = os.path.join(tempfile.gettempdir(), f"compare_result_{route_date}.csv")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", prefix=f"compare_result_{route_date}_") as tmp:
+        file_path = tmp.name
     export_results_csv(file_path, rows)
     return FileResponse(file_path, filename=f"compare_result_{route_date}.csv", media_type="text/csv")
