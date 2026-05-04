@@ -23,6 +23,15 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _optional_number(values, header_map, header_name, cast, default=0):
+    if header_name not in header_map:
+        return default
+    value = values[header_map[header_name]]
+    if value in (None, ""):
+        return default
+    return cast(value)
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -57,8 +66,8 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = _optional_number(values, header_map, "预计公里数", float)
+                est_duration = _optional_number(values, header_map, "预计时效", int)
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
