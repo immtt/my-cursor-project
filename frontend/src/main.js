@@ -56,6 +56,33 @@ function renderCompare() {
   };
 }
 
+function renderResultRows(rows) {
+  const tableBody = document.getElementById("resultTable");
+  const fragment = document.createDocumentFragment();
+  const fields = [
+    "sys_waybill_no",
+    "manual_waybill_no",
+    "match_status",
+    "store_match_rate",
+    "volume_diff_rate",
+    "line_consistent",
+    "est_distance_diff",
+    "est_duration_diff",
+  ];
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    fields.forEach((field) => {
+      const td = document.createElement("td");
+      td.textContent = row[field] ?? "";
+      tr.appendChild(td);
+    });
+    fragment.appendChild(tr);
+  });
+
+  tableBody.replaceChildren(fragment);
+}
+
 function renderResult() {
   app.innerHTML = `
     <h2>比对结果</h2>
@@ -87,13 +114,7 @@ function renderResult() {
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
