@@ -57,8 +57,10 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance_raw = values[header_map["预计公里数"]] if "预计公里数" in header_map else 0
+                est_duration_raw = values[header_map["预计时效"]] if "预计时效" in header_map else 0
+                est_distance = float(est_distance_raw or 0)
+                est_duration = int(est_duration_raw or 0)
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
