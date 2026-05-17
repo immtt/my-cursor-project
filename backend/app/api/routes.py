@@ -34,8 +34,8 @@ async def import_data(dataset_type: str, file: UploadFile = File(...), db: Sessi
 @router.post("/compare/run")
 def trigger_compare(req: CompareRequest, db: Session = Depends(get_db)):
     calc_result = backfill_manual_routes(db, req.route_date)
-    run_compare(db, req.route_date, req.match_threshold)
-    return {"message": "compare finished", "calc": calc_result}
+    compare_result = run_compare(db, req.route_date, req.match_threshold)
+    return {"message": "compare finished", "calc": calc_result, "compare": compare_result}
 
 
 @router.get("/compare/overview")

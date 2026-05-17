@@ -1,6 +1,14 @@
 const app = document.getElementById("app");
 const API_BASE = "http://127.0.0.1:8000/api";
 
+function setCells(rowElement, values) {
+  values.forEach((value) => {
+    const cell = document.createElement("td");
+    cell.textContent = value ?? "";
+    rowElement.appendChild(cell);
+  });
+}
+
 function route() {
   const hash = window.location.hash || "#import";
   if (hash === "#import") return renderImport();
@@ -87,13 +95,22 @@ function renderResult() {
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    const table = document.getElementById("resultTable");
+    table.replaceChildren();
+    rows.forEach((r) => {
+      const row = document.createElement("tr");
+      setCells(row, [
+        r.sys_waybill_no,
+        r.manual_waybill_no,
+        r.match_status,
+        r.store_match_rate,
+        r.volume_diff_rate,
+        r.line_consistent,
+        r.est_distance_diff,
+        r.est_duration_diff,
+      ]);
+      table.appendChild(row);
+    });
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
