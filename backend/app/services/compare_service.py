@@ -14,9 +14,13 @@ def _match_status(rate: float, threshold: float) -> str:
 
 
 def run_compare(db: Session, route_date, threshold: float = 0.5):
-    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
+    if not sys_rows:
+        return {"created": 0, "skipped": True, "reason": "no_system_data"}
+
+    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date).all()
+    created = 0
 
     for sys_row in sys_rows:
         best = None
@@ -37,6 +41,7 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                     store_match_rate=0.0,
                 )
             )
+            created += 1
             continue
 
         status = _match_status(best_rate, threshold)
@@ -63,7 +68,9 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                 est_duration_diff=duration_diff,
             )
         )
+        created += 1
     db.commit()
+    return {"created": created, "skipped": False}
 
 
 def overview(db: Session, route_date):
