@@ -1,10 +1,17 @@
 import importlib
+import sys
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+
+from app.db import session as db_session_module
 
 
 def test_documented_frontend_origin_can_call_api(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'smart_route.db'}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(db_session_module, "engine", test_engine)
+    sys.modules.pop("app.main", None)
+
     main = importlib.import_module("app.main")
     client = TestClient(main.app)
 
