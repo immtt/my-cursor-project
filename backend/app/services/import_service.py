@@ -23,6 +23,13 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _optional_cell(values, header_map: dict[str, int], column: str):
+    idx = header_map.get(column)
+    if idx is None:
+        return None
+    return values[idx]
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -57,8 +64,12 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = float(_optional_cell(values, header_map, "预计公里数") or 0)
+                est_duration = int(_optional_cell(values, header_map, "预计时效") or 0)
+                db.query(SysSuggest).filter(
+                    SysSuggest.route_date == route_date,
+                    SysSuggest.waybill_no == waybill_no,
+                ).delete(synchronize_session=False)
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -71,6 +82,10 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                     est_duration=est_duration,
                 )
             else:
+                db.query(ManualRoute).filter(
+                    ManualRoute.route_date == route_date,
+                    ManualRoute.waybill_no == waybill_no,
+                ).delete(synchronize_session=False)
                 obj = ManualRoute(
                     route_date=route_date,
                     waybill_no=waybill_no,
