@@ -40,6 +40,18 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             continue
 
         status = _match_status(best_rate, threshold)
+        if status == "none":
+            db.add(
+                CompareResult(
+                    route_date=route_date,
+                    sys_id=sys_row.id,
+                    manual_id=None,
+                    match_status=status,
+                    store_match_rate=round(best_rate * 100, 2),
+                )
+            )
+            continue
+
         volume_diff_rate = None
         if best.volume:
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
