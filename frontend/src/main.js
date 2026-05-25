@@ -1,6 +1,18 @@
 const app = document.getElementById("app");
 const API_BASE = "http://127.0.0.1:8000/api";
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => (
+    {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]
+  ));
+}
+
 function route() {
   const hash = window.location.hash || "#import";
   if (hash === "#import") return renderImport();
@@ -89,9 +101,9 @@ function renderResult() {
     const rows = await resultResp.json();
     document.getElementById("resultTable").innerHTML = rows
       .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
+        (r) => `<tr><td>${escapeHtml(r.sys_waybill_no)}</td><td>${escapeHtml(r.manual_waybill_no)}</td><td>${escapeHtml(r.match_status)}</td>
+      <td>${escapeHtml(r.store_match_rate)}</td><td>${escapeHtml(r.volume_diff_rate)}</td><td>${escapeHtml(r.line_consistent)}</td>
+      <td>${escapeHtml(r.est_distance_diff)}</td><td>${escapeHtml(r.est_duration_diff)}</td></tr>`
       )
       .join("");
   };
