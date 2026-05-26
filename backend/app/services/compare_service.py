@@ -17,17 +17,20 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
     db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date).all()
+    matched_manual_ids = set()
 
     for sys_row in sys_rows:
         best = None
         best_rate = -1.0
         for man_row in manual_rows:
+            if man_row.id in matched_manual_ids:
+                continue
             rate = calc_store_match_rate(sys_row.stores, man_row.stores)
             if rate > best_rate:
                 best = man_row
                 best_rate = rate
 
-        if best is None:
+        if best is None or best_rate < threshold:
             db.add(
                 CompareResult(
                     route_date=route_date,
@@ -40,6 +43,7 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             continue
 
         status = _match_status(best_rate, threshold)
+        matched_manual_ids.add(best.id)
         volume_diff_rate = None
         if best.volume:
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
@@ -61,6 +65,19 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                 line_consistent=1 if sys_row.route_line == best.route_line else 0,
                 est_distance_diff=distance_diff,
                 est_duration_diff=duration_diff,
+            )
+        )
+
+    for man_row in manual_rows:
+        if man_row.id in matched_manual_ids:
+            continue
+        db.add(
+            CompareResult(
+                route_date=route_date,
+                sys_id=None,
+                manual_id=man_row.id,
+                match_status="none",
+                store_match_rate=0.0,
             )
         )
     db.commit()

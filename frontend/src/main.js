@@ -37,6 +37,27 @@ function renderData() {
   app.innerHTML = `<h2>数据管理</h2><p>MVP阶段：可通过数据库或后端API扩展增删改查。</p>`;
 }
 
+function resultCell(value) {
+  const td = document.createElement("td");
+  td.textContent = value ?? "";
+  return td;
+}
+
+function resultRow(row) {
+  const tr = document.createElement("tr");
+  [
+    row.sys_waybill_no,
+    row.manual_waybill_no,
+    row.match_status,
+    row.store_match_rate,
+    row.volume_diff_rate,
+    row.line_consistent,
+    row.est_distance_diff,
+    row.est_duration_diff,
+  ].forEach((value) => tr.appendChild(resultCell(value)));
+  return tr;
+}
+
 function renderCompare() {
   app.innerHTML = `
     <h2>数据比对</h2>
@@ -87,13 +108,7 @@ function renderResult() {
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    document.getElementById("resultTable").replaceChildren(...rows.map(resultRow));
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;

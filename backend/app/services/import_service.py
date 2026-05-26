@@ -4,6 +4,7 @@ from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from app.models.entities import ManualRoute, SysSuggest
+from app.utils.store_match import normalize_stores
 
 
 REQUIRED_COLUMNS = [
@@ -21,6 +22,13 @@ def _parse_date(value):
     if hasattr(value, "date"):
         return value.date()
     return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def _optional_cell(values, header_map, name):
+    idx = header_map.get(name)
+    if idx is None:
+        return None
+    return values[idx]
 
 
 def import_excel(db: Session, dataset_type: str, file_path: str):
@@ -53,12 +61,14 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
 
             if not all([waybill_no, route_line, warehouse_name, stores]):
                 raise ValueError("文本字段存在空值")
+            if not normalize_stores(stores):
+                raise ValueError("拼载门店至少需要包含一个有效门店")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = float(_optional_cell(values, header_map, "预计公里数") or 0)
+                est_duration = int(_optional_cell(values, header_map, "预计时效") or 0)
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
