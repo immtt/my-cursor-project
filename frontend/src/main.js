@@ -37,6 +37,31 @@ function renderData() {
   app.innerHTML = `<h2>数据管理</h2><p>MVP阶段：可通过数据库或后端API扩展增删改查。</p>`;
 }
 
+function appendCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = value ?? "";
+  row.appendChild(cell);
+}
+
+function renderResultRows(rows) {
+  const tableBody = document.getElementById("resultTable");
+  tableBody.replaceChildren();
+  rows.forEach((result) => {
+    const row = document.createElement("tr");
+    [
+      result.sys_waybill_no,
+      result.manual_waybill_no,
+      result.match_status,
+      result.store_match_rate,
+      result.volume_diff_rate,
+      result.line_consistent,
+      result.est_distance_diff,
+      result.est_duration_diff,
+    ].forEach((value) => appendCell(row, value));
+    tableBody.appendChild(row);
+  });
+}
+
 function renderCompare() {
   app.innerHTML = `
     <h2>数据比对</h2>
@@ -82,22 +107,29 @@ function renderResult() {
   document.getElementById("queryBtn").onclick = async () => {
     const routeDate = document.getElementById("resultDate").value;
     const status = document.getElementById("matchStatus").value;
-    const overviewResp = await fetch(`${API_BASE}/compare/overview?route_date=${routeDate}`);
+    if (!routeDate) {
+      document.getElementById("overview").textContent = "请选择排线日期";
+      renderResultRows([]);
+      return;
+    }
+    const overviewParams = new URLSearchParams({ route_date: routeDate });
+    const overviewResp = await fetch(`${API_BASE}/compare/overview?${overviewParams}`);
     const overviewData = await overviewResp.json();
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
-    const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
+    const resultParams = new URLSearchParams({ route_date: routeDate });
+    if (status) resultParams.set("match_status", status);
+    const resultResp = await fetch(`${API_BASE}/compare/results?${resultParams}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
-    window.open(`${API_BASE}/compare/export?route_date=${routeDate}`, "_blank");
+    if (!routeDate) {
+      document.getElementById("overview").textContent = "请选择排线日期";
+      return;
+    }
+    const exportParams = new URLSearchParams({ route_date: routeDate });
+    window.open(`${API_BASE}/compare/export?${exportParams}`, "_blank");
   };
 }
 
