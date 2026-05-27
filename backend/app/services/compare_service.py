@@ -14,9 +14,12 @@ def _match_status(rate: float, threshold: float) -> str:
 
 
 def run_compare(db: Session, route_date, threshold: float = 0.5):
-    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date).all()
+    if not sys_rows:
+        return
+
+    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
 
     for sys_row in sys_rows:
         best = None
@@ -40,6 +43,18 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             continue
 
         status = _match_status(best_rate, threshold)
+        if status == "none":
+            db.add(
+                CompareResult(
+                    route_date=route_date,
+                    sys_id=sys_row.id,
+                    manual_id=None,
+                    match_status=status,
+                    store_match_rate=round(best_rate * 100, 2),
+                )
+            )
+            continue
+
         volume_diff_rate = None
         if best.volume:
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
