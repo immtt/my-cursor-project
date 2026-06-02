@@ -23,6 +23,26 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _text(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _optional_float(values, header_map, column_name: str, default: float = 0.0) -> float:
+    idx = header_map.get(column_name)
+    if idx is None:
+        return default
+    raw = values[idx]
+    if raw is None or str(raw).strip() == "":
+        return default
+    return float(raw)
+
+
+def _optional_int(values, header_map, column_name: str, default: int = 0) -> int:
+    return int(_optional_float(values, header_map, column_name, float(default)))
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -44,10 +64,10 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
         values = [sheet.cell(row=row_no, column=i + 1).value for i in range(len(headers))]
         try:
             route_date = _parse_date(values[header_map["排线日期"]])
-            waybill_no = str(values[header_map["运单号"]]).strip()
-            route_line = str(values[header_map["归属线路"]]).strip()
-            warehouse_name = str(values[header_map["始发仓库"]]).strip()
-            stores = str(values[header_map["拼载门店"]]).strip()
+            waybill_no = _text(values[header_map["运单号"]])
+            route_line = _text(values[header_map["归属线路"]])
+            warehouse_name = _text(values[header_map["始发仓库"]])
+            stores = _text(values[header_map["拼载门店"]])
             volume = float(values[header_map["配送体积"]])
             load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
 
@@ -57,8 +77,8 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = _optional_float(values, header_map, "预计公里数")
+                est_duration = _optional_int(values, header_map, "预计时效")
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
