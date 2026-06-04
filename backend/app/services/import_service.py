@@ -23,6 +23,45 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _is_blank(value) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _required_text(values, header_map, column: str) -> str:
+    value = values[header_map[column]]
+    if _is_blank(value):
+        raise ValueError("文本字段存在空值")
+    return str(value).strip()
+
+
+def _optional_float(values, header_map, column: str, default: float = 0.0) -> float:
+    idx = header_map.get(column)
+    if idx is None or _is_blank(values[idx]):
+        return default
+    return float(values[idx])
+
+
+def _optional_int(values, header_map, column: str, default: int = 0) -> int:
+    idx = header_map.get(column)
+    if idx is None or _is_blank(values[idx]):
+        return default
+    return int(float(values[idx]))
+
+
+def _upsert_row(db: Session, model, fields: dict):
+    obj = (
+        db.query(model)
+        .filter(model.route_date == fields["route_date"], model.waybill_no == fields["waybill_no"])
+        .first()
+    )
+    if obj is None:
+        obj = model()
+        db.add(obj)
+    for key, value in fields.items():
+        setattr(obj, key, value)
+    db.flush()
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -44,43 +83,42 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
         values = [sheet.cell(row=row_no, column=i + 1).value for i in range(len(headers))]
         try:
             route_date = _parse_date(values[header_map["排线日期"]])
-            waybill_no = str(values[header_map["运单号"]]).strip()
-            route_line = str(values[header_map["归属线路"]]).strip()
-            warehouse_name = str(values[header_map["始发仓库"]]).strip()
-            stores = str(values[header_map["拼载门店"]]).strip()
+            waybill_no = _required_text(values, header_map, "运单号")
+            route_line = _required_text(values, header_map, "归属线路")
+            warehouse_name = _required_text(values, header_map, "始发仓库")
+            stores = _required_text(values, header_map, "拼载门店")
             volume = float(values[header_map["配送体积"]])
             load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
 
-            if not all([waybill_no, route_line, warehouse_name, stores]):
-                raise ValueError("文本字段存在空值")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
 
+            fields = {
+                "route_date": route_date,
+                "waybill_no": waybill_no,
+                "route_line": route_line,
+                "warehouse_name": warehouse_name,
+                "stores": stores,
+                "volume": volume,
+                "load_rate": load_rate,
+            }
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
-                obj = SysSuggest(
-                    route_date=route_date,
-                    waybill_no=waybill_no,
-                    route_line=route_line,
-                    warehouse_name=warehouse_name,
-                    stores=stores,
-                    volume=volume,
-                    load_rate=load_rate,
-                    est_distance=est_distance,
-                    est_duration=est_duration,
+                fields.update(
+                    {
+                        "est_distance": _optional_float(values, header_map, "预计公里数"),
+                        "est_duration": _optional_int(values, header_map, "预计时效"),
+                    }
                 )
+                _upsert_row(db, SysSuggest, fields)
             else:
-                obj = ManualRoute(
-                    route_date=route_date,
-                    waybill_no=waybill_no,
-                    route_line=route_line,
-                    warehouse_name=warehouse_name,
-                    stores=stores,
-                    volume=volume,
-                    load_rate=load_rate,
+                fields.update(
+                    {
+                        "est_distance": None,
+                        "est_duration": None,
+                        "calc_status": 0,
+                    }
                 )
-            db.add(obj)
+                _upsert_row(db, ManualRoute, fields)
             success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
