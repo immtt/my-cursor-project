@@ -23,6 +23,16 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _optional_numeric(values, header_map, column_name, default, caster):
+    idx = header_map.get(column_name)
+    if idx is None:
+        return default
+    value = values[idx]
+    if value in (None, ""):
+        return default
+    return caster(value)
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -32,6 +42,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
     errors = []
     total_rows = 0
     success_rows = 0
+    parsed_rows = {}
 
     for col in REQUIRED_COLUMNS:
         if col not in header_map:
@@ -57,8 +68,8 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = _optional_numeric(values, header_map, "预计公里数", 0.0, float)
+                est_duration = _optional_numeric(values, header_map, "预计时效", 0, lambda value: int(float(value)))
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -80,11 +91,17 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                     volume=volume,
                     load_rate=load_rate,
                 )
-            db.add(obj)
+            parsed_rows[(route_date, waybill_no)] = obj
             success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
 
+    model = SysSuggest if dataset_type == "system" else ManualRoute
+    for route_date, waybill_no in parsed_rows:
+        db.query(model).filter(model.route_date == route_date, model.waybill_no == waybill_no).delete(
+            synchronize_session=False
+        )
+    db.add_all(parsed_rows.values())
     db.commit()
     return {
         "total_rows": total_rows,
