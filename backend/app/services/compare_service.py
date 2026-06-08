@@ -14,8 +14,10 @@ def _match_status(rate: float, threshold: float) -> str:
 
 
 def run_compare(db: Session, route_date, threshold: float = 0.5):
-    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
+    if not sys_rows:
+        return 0
+    db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date).all()
 
     for sys_row in sys_rows:
@@ -64,6 +66,7 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             )
         )
     db.commit()
+    return len(sys_rows)
 
 
 def overview(db: Session, route_date):

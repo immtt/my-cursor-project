@@ -1,6 +1,31 @@
 const app = document.getElementById("app");
 const API_BASE = "http://127.0.0.1:8000/api";
 
+function appendCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = value ?? "";
+  row.appendChild(cell);
+}
+
+function renderResultRows(rows) {
+  const tableBody = document.getElementById("resultTable");
+  tableBody.textContent = "";
+  rows.forEach((result) => {
+    const row = document.createElement("tr");
+    [
+      result.sys_waybill_no,
+      result.manual_waybill_no,
+      result.match_status,
+      result.store_match_rate,
+      result.volume_diff_rate,
+      result.line_consistent,
+      result.est_distance_diff,
+      result.est_duration_diff,
+    ].forEach((value) => appendCell(row, value));
+    tableBody.appendChild(row);
+  });
+}
+
 function route() {
   const hash = window.location.hash || "#import";
   if (hash === "#import") return renderImport();
@@ -82,22 +107,25 @@ function renderResult() {
   document.getElementById("queryBtn").onclick = async () => {
     const routeDate = document.getElementById("resultDate").value;
     const status = document.getElementById("matchStatus").value;
-    const overviewResp = await fetch(`${API_BASE}/compare/overview?route_date=${routeDate}`);
+    const overviewParams = new URLSearchParams({ route_date: routeDate });
+    const overviewResp = await fetch(`${API_BASE}/compare/overview?${overviewParams}`);
     const overviewData = await overviewResp.json();
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
-    const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
+    const resultParams = new URLSearchParams({ route_date: routeDate });
+    if (status) resultParams.set("match_status", status);
+    const resultResp = await fetch(`${API_BASE}/compare/results?${resultParams}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    if (!resultResp.ok || !Array.isArray(rows)) {
+      document.getElementById("resultTable").textContent = "";
+      document.getElementById("overview").textContent = JSON.stringify(rows, null, 2);
+      return;
+    }
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
-    window.open(`${API_BASE}/compare/export?route_date=${routeDate}`, "_blank");
+    const params = new URLSearchParams({ route_date: routeDate });
+    window.open(`${API_BASE}/compare/export?${params}`, "_blank");
   };
 }
 
