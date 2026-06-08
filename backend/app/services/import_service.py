@@ -23,6 +23,22 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _optional_number(values: list, header_map: dict, column: str, default, cast):
+    idx = header_map.get(column)
+    if idx is None:
+        return cast(default)
+    value = values[idx]
+    if value is None or str(value).strip() == "":
+        return cast(default)
+    return cast(value)
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -32,6 +48,9 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
     errors = []
     total_rows = 0
     success_rows = 0
+    model = SysSuggest if dataset_type == "system" else ManualRoute
+    pending_objects = []
+    imported_keys = set()
 
     for col in REQUIRED_COLUMNS:
         if col not in header_map:
@@ -44,10 +63,10 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
         values = [sheet.cell(row=row_no, column=i + 1).value for i in range(len(headers))]
         try:
             route_date = _parse_date(values[header_map["排线日期"]])
-            waybill_no = str(values[header_map["运单号"]]).strip()
-            route_line = str(values[header_map["归属线路"]]).strip()
-            warehouse_name = str(values[header_map["始发仓库"]]).strip()
-            stores = str(values[header_map["拼载门店"]]).strip()
+            waybill_no = _cell_text(values[header_map["运单号"]])
+            route_line = _cell_text(values[header_map["归属线路"]])
+            warehouse_name = _cell_text(values[header_map["始发仓库"]])
+            stores = _cell_text(values[header_map["拼载门店"]])
             volume = float(values[header_map["配送体积"]])
             load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
 
@@ -55,10 +74,13 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("文本字段存在空值")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
+            key = (route_date, waybill_no)
+            if key in imported_keys:
+                raise ValueError("同一文件存在重复运单号")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = _optional_number(values, header_map, "预计公里数", 0, float)
+                est_duration = _optional_number(values, header_map, "预计时效", 0, int)
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -80,11 +102,18 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                     volume=volume,
                     load_rate=load_rate,
                 )
-            db.add(obj)
+            pending_objects.append(obj)
+            imported_keys.add(key)
             success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
 
+    for route_date, waybill_no in imported_keys:
+        db.query(model).filter(model.route_date == route_date, model.waybill_no == waybill_no).delete(
+            synchronize_session=False
+        )
+    for obj in pending_objects:
+        db.add(obj)
     db.commit()
     return {
         "total_rows": total_rows,
