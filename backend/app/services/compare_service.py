@@ -13,6 +13,10 @@ def _match_status(rate: float, threshold: float) -> str:
     return "none"
 
 
+def _has_estimate(value) -> bool:
+    return value is not None and value > 0
+
+
 def run_compare(db: Session, route_date, threshold: float = 0.5):
     db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
@@ -45,9 +49,9 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
         distance_diff = None
         duration_diff = None
-        if best.est_distance is not None:
+        if _has_estimate(sys_row.est_distance) and _has_estimate(best.est_distance):
             distance_diff = round(sys_row.est_distance - best.est_distance, 2)
-        if best.est_duration is not None:
+        if _has_estimate(sys_row.est_duration) and _has_estimate(best.est_duration):
             duration_diff = int(sys_row.est_duration - best.est_duration)
 
         db.add(
