@@ -13,6 +13,10 @@ def _match_status(rate: float, threshold: float) -> str:
     return "none"
 
 
+def _round_optional(value):
+    return round(value, 2) if value is not None else None
+
+
 def run_compare(db: Session, route_date, threshold: float = 0.5):
     db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date).all()
@@ -45,9 +49,9 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
         distance_diff = None
         duration_diff = None
-        if best.est_distance is not None:
+        if sys_row.est_distance is not None and best.est_distance is not None:
             distance_diff = round(sys_row.est_distance - best.est_distance, 2)
-        if best.est_duration is not None:
+        if sys_row.est_duration is not None and best.est_duration is not None:
             duration_diff = int(sys_row.est_duration - best.est_duration)
 
         db.add(
@@ -82,7 +86,7 @@ def overview(db: Session, route_date):
         "full_count": full_count,
         "partial_count": partial_count,
         "none_count": none_count,
-        "avg_volume_diff": round(avg_volume or 0, 2),
-        "avg_distance_diff": round(avg_dist or 0, 2),
-        "avg_duration_diff": round(avg_dur or 0, 2),
+        "avg_volume_diff": _round_optional(avg_volume),
+        "avg_distance_diff": _round_optional(avg_dist),
+        "avg_duration_diff": _round_optional(avg_dur),
     }
