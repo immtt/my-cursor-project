@@ -83,7 +83,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 db.query(SysSuggest).filter(
                     SysSuggest.route_date == route_date,
                     SysSuggest.waybill_no == waybill_no,
-                ).delete(synchronize_session=False)
+                ).delete(synchronize_session="fetch")
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -99,7 +99,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 db.query(ManualRoute).filter(
                     ManualRoute.route_date == route_date,
                     ManualRoute.waybill_no == waybill_no,
-                ).delete(synchronize_session=False)
+                ).delete(synchronize_session="fetch")
                 obj = ManualRoute(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -117,7 +117,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
 
     if affected_dates:
         db.query(CompareResult).filter(CompareResult.route_date.in_(affected_dates)).delete(
-            synchronize_session=False
+            synchronize_session="fetch"
         )
     db.commit()
     return {
