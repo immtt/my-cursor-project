@@ -3,7 +3,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
-from app.models.entities import ManualRoute, SysSuggest
+from app.models.entities import CompareResult, ManualRoute, SysSuggest
 
 
 REQUIRED_COLUMNS = [
@@ -18,9 +18,50 @@ REQUIRED_COLUMNS = [
 
 
 def _parse_date(value):
+    if value is None:
+        raise ValueError("排线日期不能为空")
     if hasattr(value, "date"):
         return value.date()
-    return datetime.strptime(str(value), "%Y-%m-%d").date()
+    return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
+
+
+def _required_text(value, column_name: str) -> str:
+    if value is None:
+        raise ValueError(f"{column_name}不能为空")
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"{column_name}不能为空")
+    return text
+
+
+def _required_float(value, column_name: str) -> float:
+    if value is None or str(value).strip() == "":
+        raise ValueError(f"{column_name}不能为空")
+    return float(value)
+
+
+def _load_rate(value) -> float:
+    if value is None or str(value).strip() == "":
+        raise ValueError("装载率不能为空")
+    return float(str(value).replace("%", ""))
+
+
+def _optional_number(values, header_map, column_name: str, parser):
+    idx = header_map.get(column_name)
+    if idx is None:
+        return None
+    value = values[idx]
+    if value is None or str(value).strip() == "":
+        return None
+    return parser(value)
+
+
+def _delete_replaced_rows(db: Session, model, keys):
+    for route_date, waybill_no in keys:
+        db.query(model).filter(
+            model.route_date == route_date,
+            model.waybill_no == waybill_no,
+        ).delete(synchronize_session="fetch")
 
 
 def import_excel(db: Session, dataset_type: str, file_path: str):
@@ -32,6 +73,9 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
     errors = []
     total_rows = 0
     success_rows = 0
+    parsed_rows = []
+    replace_keys = set()
+    affected_dates = set()
 
     for col in REQUIRED_COLUMNS:
         if col not in header_map:
@@ -44,21 +88,19 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
         values = [sheet.cell(row=row_no, column=i + 1).value for i in range(len(headers))]
         try:
             route_date = _parse_date(values[header_map["排线日期"]])
-            waybill_no = str(values[header_map["运单号"]]).strip()
-            route_line = str(values[header_map["归属线路"]]).strip()
-            warehouse_name = str(values[header_map["始发仓库"]]).strip()
-            stores = str(values[header_map["拼载门店"]]).strip()
-            volume = float(values[header_map["配送体积"]])
-            load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
+            waybill_no = _required_text(values[header_map["运单号"]], "运单号")
+            route_line = _required_text(values[header_map["归属线路"]], "归属线路")
+            warehouse_name = _required_text(values[header_map["始发仓库"]], "始发仓库")
+            stores = _required_text(values[header_map["拼载门店"]], "拼载门店")
+            volume = _required_float(values[header_map["配送体积"]], "配送体积")
+            load_rate = _load_rate(values[header_map["装载率"]])
 
-            if not all([waybill_no, route_line, warehouse_name, stores]):
-                raise ValueError("文本字段存在空值")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_distance = _optional_number(values, header_map, "预计公里数", float)
+                est_duration = _optional_number(values, header_map, "预计时效", lambda v: int(float(v)))
                 obj = SysSuggest(
                     route_date=route_date,
                     waybill_no=waybill_no,
@@ -80,11 +122,20 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                     volume=volume,
                     load_rate=load_rate,
                 )
-            db.add(obj)
+            parsed_rows.append(obj)
+            replace_keys.add((route_date, waybill_no))
+            affected_dates.add(route_date)
             success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
 
+    if parsed_rows:
+        model = SysSuggest if dataset_type == "system" else ManualRoute
+        db.query(CompareResult).filter(CompareResult.route_date.in_(affected_dates)).delete(
+            synchronize_session="fetch"
+        )
+        _delete_replaced_rows(db, model, replace_keys)
+        db.add_all(parsed_rows)
     db.commit()
     return {
         "total_rows": total_rows,
