@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS sys_suggest (
   stores TEXT NOT NULL,
   volume DECIMAL(10,2) NOT NULL,
   load_rate DECIMAL(5,2) NOT NULL,
-  est_distance DECIMAL(10,2) NOT NULL,
-  est_duration INT NOT NULL,
+  est_distance DECIMAL(10,2) NULL,
+  est_duration INT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_sys_route_date(route_date)
 );
