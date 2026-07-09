@@ -8,8 +8,8 @@
 - `stores`：拼载门店（逗号分隔）
 - `volume`：配送体积
 - `load_rate`：装载率
-- `est_distance`：预计公里数
-- `est_duration`：预计时效
+- `est_distance`：预计公里数（可为空）
+- `est_duration`：预计时效（可为空）
 
 ## 表：manual_route
 - 同 `sys_suggest` 主字段
