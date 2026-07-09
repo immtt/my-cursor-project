@@ -15,8 +15,8 @@ class SysSuggest(Base):
     stores = Column(Text, nullable=False)
     volume = Column(Float, nullable=False)
     load_rate = Column(Float, nullable=False)
-    est_distance = Column(Float, nullable=False)
-    est_duration = Column(Integer, nullable=False)
+    est_distance = Column(Float, nullable=True)
+    est_duration = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 

@@ -1,6 +1,29 @@
 const app = document.getElementById("app");
 const API_BASE = "http://127.0.0.1:8000/api";
 
+function appendCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = value ?? "";
+  row.appendChild(cell);
+}
+
+function renderResultRows(rows) {
+  const table = document.getElementById("resultTable");
+  table.textContent = "";
+  rows.forEach((r) => {
+    const row = document.createElement("tr");
+    appendCell(row, r.sys_waybill_no);
+    appendCell(row, r.manual_waybill_no);
+    appendCell(row, r.match_status);
+    appendCell(row, r.store_match_rate);
+    appendCell(row, r.volume_diff_rate);
+    appendCell(row, r.line_consistent);
+    appendCell(row, r.est_distance_diff);
+    appendCell(row, r.est_duration_diff);
+    table.appendChild(row);
+  });
+}
+
 function route() {
   const hash = window.location.hash || "#import";
   if (hash === "#import") return renderImport();
@@ -87,13 +110,7 @@ function renderResult() {
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
