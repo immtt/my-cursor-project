@@ -1,5 +1,28 @@
-const app = document.getElementById("app");
+const app = typeof document !== "undefined" ? document.getElementById("app") : null;
 const API_BASE = "http://127.0.0.1:8000/api";
+
+function appendTextCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = value ?? "";
+  row.appendChild(cell);
+}
+
+function renderResultRows(rows) {
+  const tbody = document.getElementById("resultTable");
+  tbody.replaceChildren();
+  rows.forEach((r) => {
+    const row = document.createElement("tr");
+    appendTextCell(row, r.sys_waybill_no);
+    appendTextCell(row, r.manual_waybill_no);
+    appendTextCell(row, r.match_status);
+    appendTextCell(row, r.store_match_rate);
+    appendTextCell(row, r.volume_diff_rate);
+    appendTextCell(row, r.line_consistent);
+    appendTextCell(row, r.est_distance_diff);
+    appendTextCell(row, r.est_duration_diff);
+    tbody.appendChild(row);
+  });
+}
 
 function route() {
   const hash = window.location.hash || "#import";
@@ -87,13 +110,7 @@ function renderResult() {
     document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
@@ -101,5 +118,11 @@ function renderResult() {
   };
 }
 
-window.addEventListener("hashchange", route);
-route();
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  window.addEventListener("hashchange", route);
+  route();
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { renderResultRows };
+}
