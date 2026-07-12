@@ -1,5 +1,37 @@
-const app = document.getElementById("app");
+const app = typeof document !== "undefined" ? document.getElementById("app") : null;
 const API_BASE = "http://127.0.0.1:8000/api";
+
+function setJsonText(id, data) {
+  const target = document.getElementById(id);
+  if (target) {
+    target.textContent = JSON.stringify(data, null, 2);
+  }
+}
+
+function renderResultRows(rows) {
+  const resultTable = document.getElementById("resultTable");
+  if (!resultTable) return;
+
+  resultTable.replaceChildren();
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    [
+      r.sys_waybill_no ?? "",
+      r.manual_waybill_no ?? "",
+      r.match_status,
+      r.store_match_rate,
+      r.volume_diff_rate ?? "",
+      r.line_consistent,
+      r.est_distance_diff ?? "",
+      r.est_duration_diff ?? "",
+    ].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    resultTable.appendChild(tr);
+  });
+}
 
 function route() {
   const hash = window.location.hash || "#import";
@@ -29,7 +61,7 @@ function renderImport() {
     formData.append("file", file);
     const resp = await fetch(`${API_BASE}/import/${datasetType}`, { method: "POST", body: formData });
     const data = await resp.json();
-    document.getElementById("importResp").textContent = JSON.stringify(data, null, 2);
+    setJsonText("importResp", data);
   };
 }
 
@@ -52,7 +84,7 @@ function renderCompare() {
       body: JSON.stringify({ route_date: routeDate, match_threshold: 0.5 }),
     });
     const data = await resp.json();
-    document.getElementById("compareResp").textContent = JSON.stringify(data, null, 2);
+    setJsonText("compareResp", data);
   };
 }
 
@@ -82,18 +114,22 @@ function renderResult() {
   document.getElementById("queryBtn").onclick = async () => {
     const routeDate = document.getElementById("resultDate").value;
     const status = document.getElementById("matchStatus").value;
+    if (!routeDate) {
+      setJsonText("overview", { error: "请选择排线日期" });
+      renderResultRows([]);
+      return;
+    }
     const overviewResp = await fetch(`${API_BASE}/compare/overview?route_date=${routeDate}`);
     const overviewData = await overviewResp.json();
-    document.getElementById("overview").textContent = JSON.stringify(overviewData, null, 2);
+    setJsonText("overview", overviewData);
     const resultResp = await fetch(`${API_BASE}/compare/results?route_date=${routeDate}&match_status=${status}`);
     const rows = await resultResp.json();
-    document.getElementById("resultTable").innerHTML = rows
-      .map(
-        (r) => `<tr><td>${r.sys_waybill_no ?? ""}</td><td>${r.manual_waybill_no ?? ""}</td><td>${r.match_status}</td>
-      <td>${r.store_match_rate}</td><td>${r.volume_diff_rate ?? ""}</td><td>${r.line_consistent}</td>
-      <td>${r.est_distance_diff ?? ""}</td><td>${r.est_duration_diff ?? ""}</td></tr>`
-      )
-      .join("");
+    if (!Array.isArray(rows)) {
+      setJsonText("overview", rows);
+      renderResultRows([]);
+      return;
+    }
+    renderResultRows(rows);
   };
   document.getElementById("exportBtn").onclick = () => {
     const routeDate = document.getElementById("resultDate").value;
@@ -101,5 +137,11 @@ function renderResult() {
   };
 }
 
-window.addEventListener("hashchange", route);
-route();
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", route);
+  route();
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { renderResultRows };
+}
