@@ -45,9 +45,9 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
         distance_diff = None
         duration_diff = None
-        if best.est_distance is not None:
+        if sys_row.est_distance is not None and best.est_distance is not None:
             distance_diff = round(sys_row.est_distance - best.est_distance, 2)
-        if best.est_duration is not None:
+        if sys_row.est_duration is not None and best.est_duration is not None:
             duration_diff = int(sys_row.est_duration - best.est_duration)
 
         db.add(
