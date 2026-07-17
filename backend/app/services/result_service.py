@@ -5,6 +5,12 @@ from sqlalchemy.orm import Session
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
 
 
+def _escape_spreadsheet_formula(value):
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return f"'{value}"
+    return value
+
+
 def fetch_results(db: Session, route_date, match_status: str | None = None):
     q = db.query(CompareResult).filter(CompareResult.route_date == route_date)
     if match_status:
@@ -43,4 +49,7 @@ def export_results_csv(file_path: str, rows: list[dict]):
     with open(file_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {field: _escape_spreadsheet_formula(row.get(field)) for field in fields}
+            for row in rows
+        )
