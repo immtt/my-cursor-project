@@ -20,6 +20,8 @@ router = APIRouter()
 async def import_data(dataset_type: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     if dataset_type not in {"system", "manual"}:
         raise HTTPException(status_code=400, detail="dataset_type must be system or manual")
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="only .xlsx files are supported")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         content = await file.read()
         tmp.write(content)
