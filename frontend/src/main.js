@@ -17,7 +17,7 @@ function renderImport() {
       <option value="system">系统建议数据</option>
       <option value="manual">手动排线数据</option>
     </select>
-    <input id="fileInput" type="file" accept=".xlsx,.xls" />
+    <input id="fileInput" type="file" accept=".xlsx" />
     <button id="importBtn">导入</button>
     <pre id="importResp"></pre>
   `;
