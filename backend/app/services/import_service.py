@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 
 from openpyxl import load_workbook
@@ -21,6 +22,13 @@ def _parse_date(value):
     if hasattr(value, "date"):
         return value.date()
     return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def _parse_finite_float(value, field_name: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field_name}必须为有限数字")
+    return parsed
 
 
 def import_excel(db: Session, dataset_type: str, file_path: str):
@@ -48,8 +56,10 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
             route_line = str(values[header_map["归属线路"]]).strip()
             warehouse_name = str(values[header_map["始发仓库"]]).strip()
             stores = str(values[header_map["拼载门店"]]).strip()
-            volume = float(values[header_map["配送体积"]])
-            load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
+            volume = _parse_finite_float(values[header_map["配送体积"]], "配送体积")
+            load_rate = _parse_finite_float(
+                str(values[header_map["装载率"]]).replace("%", ""), "装载率"
+            )
 
             if not all([waybill_no, route_line, warehouse_name, stores]):
                 raise ValueError("文本字段存在空值")
@@ -57,7 +67,9 @@ def import_excel(db: Session, dataset_type: str, file_path: str):
                 raise ValueError("配送体积不能为负数")
 
             if dataset_type == "system":
-                est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
+                est_distance = _parse_finite_float(
+                    values[header_map.get("预计公里数", -1)] or 0, "预计公里数"
+                )
                 est_duration = int(values[header_map.get("预计时效", -1)] or 0)
                 obj = SysSuggest(
                     route_date=route_date,
