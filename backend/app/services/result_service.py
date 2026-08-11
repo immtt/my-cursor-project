@@ -1,8 +1,19 @@
 import csv
+import math
 
 from sqlalchemy.orm import Session
 
 from app.models.entities import CompareResult, ManualRoute, SysSuggest
+
+
+def _finite_or_none(value):
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def fetch_results(db: Session, route_date, match_status: str | None = None):
@@ -19,10 +30,10 @@ def fetch_results(db: Session, route_date, match_status: str | None = None):
                 "sys_waybill_no": sys_row.waybill_no if sys_row else None,
                 "manual_waybill_no": manual_row.waybill_no if manual_row else None,
                 "match_status": row.match_status,
-                "store_match_rate": row.store_match_rate,
-                "volume_diff_rate": row.volume_diff_rate,
+                "store_match_rate": _finite_or_none(row.store_match_rate),
+                "volume_diff_rate": _finite_or_none(row.volume_diff_rate),
                 "line_consistent": bool(row.line_consistent),
-                "est_distance_diff": row.est_distance_diff,
+                "est_distance_diff": _finite_or_none(row.est_distance_diff),
                 "est_duration_diff": row.est_duration_diff,
             }
         )
