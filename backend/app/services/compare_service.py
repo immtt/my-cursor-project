@@ -1,3 +1,5 @@
+import math
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,21 @@ def _match_status(rate: float, threshold: float) -> str:
     if rate >= threshold:
         return "partial"
     return "none"
+
+
+def _finite_or_none(value):
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _safe_round_avg(value) -> float:
+    number = _finite_or_none(value)
+    return round(number or 0, 2)
 
 
 def run_compare(db: Session, route_date, threshold: float = 0.5):
@@ -42,11 +59,16 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
         status = _match_status(best_rate, threshold)
         volume_diff_rate = None
         if best.volume:
-            volume_diff_rate = round(((sys_row.volume - best.volume) / best.volume) * 100, 2)
+            # Near-zero manual volume can overflow to Inf and break JSON responses.
+            raw_rate = ((sys_row.volume - best.volume) / best.volume) * 100
+            if math.isfinite(raw_rate):
+                volume_diff_rate = round(raw_rate, 2)
         distance_diff = None
         duration_diff = None
         if best.est_distance is not None:
-            distance_diff = round(sys_row.est_distance - best.est_distance, 2)
+            raw_distance = sys_row.est_distance - best.est_distance
+            if math.isfinite(raw_distance):
+                distance_diff = round(raw_distance, 2)
         if best.est_duration is not None:
             duration_diff = int(sys_row.est_duration - best.est_duration)
 
@@ -82,7 +104,7 @@ def overview(db: Session, route_date):
         "full_count": full_count,
         "partial_count": partial_count,
         "none_count": none_count,
-        "avg_volume_diff": round(avg_volume or 0, 2),
-        "avg_distance_diff": round(avg_dist or 0, 2),
-        "avg_duration_diff": round(avg_dur or 0, 2),
+        "avg_volume_diff": _safe_round_avg(avg_volume),
+        "avg_distance_diff": _safe_round_avg(avg_dist),
+        "avg_duration_diff": _safe_round_avg(avg_dur),
     }
