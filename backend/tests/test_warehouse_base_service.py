@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from app.models.entities import WarehouseBase
 from app.services.warehouse_base_service import (
     batch_supplement_warehouse_base_coordinates,
+    build_warehouse_base_export_xlsx_bytes,
     create_warehouse_base,
     delete_warehouse_base,
     get_by_warehouse_code,
@@ -221,5 +222,73 @@ def test_warehouse_base_import_header_only_clears_previous(db_session):
         assert out["upserted_rows"] == 0
         assert out["skipped_incomplete"] == 0
         assert db_session.query(WarehouseBase).count() == 0
+    finally:
+        os.remove(path)
+
+
+def test_warehouse_base_export_reimport_preserves_rows(db_session):
+    """导出表头是「业务品牌」，再导入同一文件不得把仓表清空。"""
+    create_warehouse_base(
+        db_session,
+        _w(
+            warehouse_code="EXP1",
+            warehouse_name="导出仓",
+            group_name="集团Y",
+            brand="品牌丙",
+            address="导出地址1",
+        ),
+    )
+    xlsx = build_warehouse_base_export_xlsx_bytes(db_session)
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(xlsx)
+        out = import_warehouse_workbook(db_session, path, "导出回灌")
+        assert out["ok"] is True
+        assert out["upserted_rows"] == 1
+        assert out["skipped_incomplete"] == 0
+        assert db_session.query(WarehouseBase).count() == 1
+        r0 = get_by_warehouse_code(db_session, "EXP1")
+        assert r0 is not None
+        assert r0.warehouse_name == "导出仓"
+        assert r0.group_name == "集团Y"
+        assert r0.brand == "品牌丙"
+        assert r0.address == "导出地址1"
+    finally:
+        os.remove(path)
+
+
+def test_warehouse_base_import_skips_incomplete_without_wiping(db_session):
+    """数据行因缺品牌被全部跳过时，不得先清空再提交空表。"""
+    create_warehouse_base(
+        db_session,
+        _w(
+            warehouse_code="KEEP1",
+            warehouse_name="应保留仓",
+            group_name="集团Z",
+            brand="品牌丁",
+            address="保留地址",
+        ),
+    )
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "仓管理"
+        ws.append(["仓库代码", "仓库名称", "集团", "仓库地址"])
+        ws.append(["N1", "新仓", "某集团", "上海市路1号"])
+        wb.save(path)
+        wb.close()
+        try:
+            import_warehouse_workbook(db_session, path, "缺品牌")
+            raise AssertionError("expected ValueError when every data row is incomplete")
+        except ValueError as exc:
+            assert "完整行" in str(exc)
+        assert db_session.query(WarehouseBase).count() == 1
+        kept = get_by_warehouse_code(db_session, "KEEP1")
+        assert kept is not None
+        assert kept.warehouse_name == "应保留仓"
     finally:
         os.remove(path)

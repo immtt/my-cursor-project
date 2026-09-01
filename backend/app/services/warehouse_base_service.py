@@ -688,7 +688,11 @@ def import_warehouse_workbook(db: Session, path: str, import_source: str) -> Dic
         group_val = _cell_str(pick(row, "集团"))
         ad0 = pick(row, "仓库地址")
         address_val = _cell_str(ad0) if ad0 is not None else None
-        brand_val = _cell_str(pick(row, "品牌")) or _cell_str(pick(row, "二级组织"))
+        brand_val = (
+            _cell_str(pick(row, "品牌"))
+            or _cell_str(pick(row, "二级组织"))
+            or _cell_str(pick(row, "业务品牌"))
+        )
         if not name or not group_val or not address_val or not brand_val:
             n_skip += 1
             continue
@@ -705,12 +709,18 @@ def import_warehouse_workbook(db: Session, path: str, import_source: str) -> Dic
         deduped = [q for q in deduped if _k(q) != key]
         deduped.append(pr)
 
+    if not parsed and n_skip:
+        raise ValueError(
+            "没有可导入的完整行（须含仓库名称、集团、仓库地址、业务品牌），已中止以免清空现有仓库主数据"
+        )
+
     _delete_all_warehouse_bases_for_import_replace(db)
     n_upsert = 0
     for row, ckey, name, group_val, address_val, brand_val in deduped:
         w = WarehouseBase(warehouse_code=ckey, warehouse_name=name)
         w.warehouse_name = name
         w.group_name = group_val
+        w.brand = brand_val
         w.owning_org = _cell_str(pick(row, "所属组织"))
         w.logistics_org = _cell_str(pick(row, "物流组织"))
         w.dc_store_name = _cell_str(pick(row, "配送中心门店名称"))
