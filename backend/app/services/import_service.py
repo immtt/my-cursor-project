@@ -159,6 +159,31 @@ def _build_header_map(sheet) -> Dict[str, int]:
     return header_map
 
 
+def _last_wins_staged_by_route_waybill(
+    staged_with_rows: List[Tuple[int, Any]], errors: List[Dict[str, Any]]
+) -> List[Any]:
+    """
+    同一文件内 (排线日期, 运单号) 重复时只保留最后一行。
+
+    Session autoflush=False 时，未 flush 的 db.add 对后续 existing 查询不可见，
+    重复键会各插一行，最终 UniqueConstraint 在 db.commit() 上 IntegrityError，
+    整批（含其它合法行）回滚。
+    """
+    last_by_key: Dict[Tuple[Any, str], Tuple[int, Any]] = {}
+    for row_no, obj in staged_with_rows:
+        key = (obj.route_date, (obj.waybill_no or "").strip())
+        if key in last_by_key:
+            prev_row, _prev = last_by_key[key]
+            errors.append(
+                {
+                    "row": prev_row,
+                    "reason": "同文件内重复的排线日期+运单号，已保留最后出现的行",
+                }
+            )
+        last_by_key[key] = (row_no, obj)
+    return [obj for _row, obj in last_by_key.values()]
+
+
 def import_excel(db: Session, dataset_type: str, file_path: str, operator: str = "system"):
     wb = load_workbook(file_path)
     sheet = wb.active
@@ -167,8 +192,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
 
     errors = []
     total_rows = 0
-    success_rows = 0
-    staged_records = []
+    staged_with_rows: List[Tuple[int, Any]] = []
     touched_dates = set()
 
     for col in REQUIRED_COLUMNS:
@@ -199,36 +223,44 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
             if dataset_type == "system":
                 est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
                 est_duration = int(values[header_map.get("预计时效", -1)] or 0)
-                staged_records.append(
-                    SysSuggest(
-                        route_date=route_date,
-                        waybill_no=waybill_no,
-                        route_line=route_line,
-                        warehouse_name=warehouse_name,
-                        stores=stores,
-                        vehicle_type=vehicle_type,
-                        volume=volume,
-                        load_rate=load_rate,
-                        est_distance=est_distance,
-                        est_duration=est_duration,
+                staged_with_rows.append(
+                    (
+                        row_no,
+                        SysSuggest(
+                            route_date=route_date,
+                            waybill_no=waybill_no,
+                            route_line=route_line,
+                            warehouse_name=warehouse_name,
+                            stores=stores,
+                            vehicle_type=vehicle_type,
+                            volume=volume,
+                            load_rate=load_rate,
+                            est_distance=est_distance,
+                            est_duration=est_duration,
+                        ),
                     )
                 )
             else:
-                staged_records.append(
-                    ManualRoute(
-                        route_date=route_date,
-                        waybill_no=waybill_no,
-                        route_line=route_line,
-                        warehouse_name=warehouse_name,
-                        stores=stores,
-                        vehicle_type=vehicle_type,
-                        volume=volume,
-                        load_rate=load_rate,
+                staged_with_rows.append(
+                    (
+                        row_no,
+                        ManualRoute(
+                            route_date=route_date,
+                            waybill_no=waybill_no,
+                            route_line=route_line,
+                            warehouse_name=warehouse_name,
+                            stores=stores,
+                            vehicle_type=vehicle_type,
+                            volume=volume,
+                            load_rate=load_rate,
+                        ),
                     )
                 )
-            success_rows += 1
         except Exception as exc:
             errors.append({"row": row_no, "reason": str(exc)})
+
+    staged_records = _last_wins_staged_by_route_waybill(staged_with_rows, errors)
+    success_rows = len(staged_records)
 
     batch_id = uuid.uuid4().hex[:16]
     imported_at = datetime.now()

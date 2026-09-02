@@ -220,6 +220,80 @@ def test_manual_import_does_not_touch_system_rows_on_same_date(db_session):
     assert sys_row.is_active == 1
 
 
+def test_import_same_file_duplicate_waybill_last_wins_keeps_siblings(db_session):
+    """同文件重复 (排线日期, 运单号) 不得 IntegrityError 整批回滚；末行覆盖，其它运单仍写入。"""
+    path = os.path.join(tempfile.gettempdir(), "sys_dup_waybill.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(["2026-04-20", "DUP001", "线路A", "仓库1", "门店甲", "4.2米标箱", 1.0, "70%", 10, 20])
+    ws.append(["2026-04-20", "KEEP001", "线路A", "仓库1", "门店乙", "4.2米标箱", 2.0, "70%", 11, 21])
+    ws.append(["2026-04-20", "DUP001", "线路B", "仓库2", "门店丙", "4.2米高栏", 9.0, "80%", 99, 88])
+    wb.save(path)
+
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["failed_rows"] == 1
+    assert out["success_rows"] == 2
+    assert any("重复的排线日期+运单号" in (e.get("reason") or "") for e in out["errors"])
+
+    rows = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == date(2026, 4, 20), SysSuggest.is_active == 1)
+        .all()
+    )
+    by_wb = {r.waybill_no: r for r in rows}
+    assert set(by_wb) == {"DUP001", "KEEP001"}
+    assert by_wb["DUP001"].volume == 9.0
+    assert by_wb["DUP001"].route_line == "线路B"
+    assert by_wb["DUP001"].warehouse_name == "仓库2"
+    assert by_wb["DUP001"].est_distance == 99.0
+    assert by_wb["DUP001"].est_duration == 88
+    assert by_wb["KEEP001"].volume == 2.0
+
+
+def test_import_manual_same_file_duplicate_waybill_last_wins(db_session):
+    path = os.path.join(tempfile.gettempdir(), "man_dup_waybill.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+        ]
+    )
+    ws.append(["2026-04-22", "M001", "线路A", "仓库1", "门店甲", "4.2米标箱", 4.0, "70%"])
+    ws.append(["2026-04-22", "M001", "线路C", "仓库3", "门店丁", "6.8米箱", 7.5, "65%"])
+    wb.save(path)
+
+    out = import_excel(db_session, "manual", path, operator="t")
+    assert out["success_rows"] == 1
+    assert out["failed_rows"] == 1
+    rows = db_session.query(ManualRoute).filter(ManualRoute.route_date == date(2026, 4, 22)).all()
+    assert len(rows) == 1
+    assert rows[0].volume == 7.5
+    assert rows[0].route_line == "线路C"
+    assert rows[0].warehouse_name == "仓库3"
+
+
 def test_import_upserts_same_waybill_and_route_date(db_session):
     file_a = os.path.join(tempfile.gettempdir(), "sys_a.xlsx")
     file_b = os.path.join(tempfile.gettempdir(), "sys_b.xlsx")
