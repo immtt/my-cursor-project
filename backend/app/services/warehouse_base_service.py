@@ -181,7 +181,9 @@ def _set_float_attr(row: WarehouseBase, k: str, v: Any) -> None:
 
 
 def _apply_geocode_to_warehouse_row(db: Session, row: WarehouseBase) -> None:
-    """根据 `address` 调用高德（或模拟）写入 `coordinate_raw`；解析失败则保持原值。"""
+    """Fill empty `coordinate_raw` from `address`; never overwrite imported or UI-pasted coords."""
+    if (row.coordinate_raw or "").strip():
+        return
     from app.services.gaode_service import geocode_address_to_coordinate_raw
 
     s = geocode_address_to_coordinate_raw(row.address)

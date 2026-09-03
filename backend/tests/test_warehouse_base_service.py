@@ -70,6 +70,32 @@ def test_warehouse_base_crud_and_list(db_session):
     assert db_session.query(WarehouseBase).filter(WarehouseBase.id == r.id).first() is None
 
 
+def test_warehouse_save_preserves_explicit_coordinates(db_session):
+    """Create/update must not replace imported or pasted 仓库坐标 with mock geocode."""
+    imported = "121.505,31.245"
+    r = create_warehouse_base(
+        db_session,
+        _w(
+            warehouse_code="C001",
+            warehouse_name="坐标仓",
+            group_name="集团",
+            brand="品牌",
+            address="上海市浦东新区某路1号",
+            coordinate_raw=imported,
+        ),
+    )
+    assert r.coordinate_raw == imported
+
+    u = update_warehouse_base(
+        db_session,
+        r.id,
+        {"manager_phone": "13800000000"},
+    )
+    assert u is not None
+    assert u.coordinate_raw == imported
+    assert u.manager_phone == "13800000000"
+
+
 def test_warehouse_base_create_without_code(db_session):
     r = create_warehouse_base(
         db_session,

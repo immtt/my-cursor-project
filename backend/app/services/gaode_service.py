@@ -104,7 +104,7 @@ def _amap_signed_params(extra: dict) -> dict:
 def _amap_get(path: str, params: dict) -> dict:
     q = _amap_signed_params(params)
     url = f"{_AMAP_BASE}/{path.lstrip('/')}"
-    with httpx.Client(timeout=_HTTPPX_TIMEOUT) as client:
+    with httpx.Client(timeout=_HTTPX_TIMEOUT) as client:
         r = client.get(url, params=q)
         r.raise_for_status()
         return r.json()
