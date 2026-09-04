@@ -87,6 +87,7 @@ def export_results_csv(file_path: str, rows: list[dict]):
         "est_duration_diff",
     ]
     with open(file_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
+        # fetch_results includes internal `id` for the map button; omit extra keys from CSV.
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
