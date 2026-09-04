@@ -1,8 +1,14 @@
 from datetime import date
 
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from app.api.deps_auth import verify_bearer_token
+from app.db.session import get_db
+from app.main import _core
 from app.models.entities import ManualRoute, SysSuggest
 from app.services.compare_service import overview, refresh_compare_after_import, run_compare
-from app.services.result_service import fetch_results
+from app.services.result_service import export_results_csv, fetch_results
 
 
 def test_refresh_compare_after_import_runs_touched_day(db_session):
@@ -256,3 +262,107 @@ def test_overview_and_results_filter_by_warehouse(db_session):
 
     rows_wrong = fetch_results(db_session, rd, rd, None, "不存在仓")
     assert rows_wrong == []
+
+
+def test_export_results_csv_accepts_fetch_results_with_id(db_session, tmp_path):
+    """Map rows include `id`; DictWriter must not 500 the CSV export on that extra key."""
+    db_session.add(
+        SysSuggest(
+            route_date=date(2026, 4, 20),
+            waybill_no="SYS001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=date(2026, 4, 20),
+            waybill_no="MAN001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店乙,门店甲",
+            vehicle_type="4.2米",
+            volume=10.0,
+            load_rate=68,
+            est_distance=42,
+            est_duration=85,
+            calc_status=1,
+        )
+    )
+    db_session.commit()
+    run_compare(db_session, date(2026, 4, 20), 0.5)
+
+    rows = fetch_results(db_session, date(2026, 4, 20), date(2026, 4, 20))
+    assert len(rows) == 1
+    assert "id" in rows[0]
+    assert rows[0]["sys_waybill_no"] == "SYS001"
+
+    out = tmp_path / "compare_result.csv"
+    export_results_csv(str(out), rows)
+    text = out.read_text(encoding="utf-8")
+    assert "sys_waybill_no" in text
+    assert "SYS001" in text
+    assert "MAN001" in text
+
+
+def test_compare_export_http_ok_when_results_exist(db_session):
+    db_session.add(
+        SysSuggest(
+            route_date=date(2026, 4, 20),
+            waybill_no="SYS001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=date(2026, 4, 20),
+            waybill_no="MAN001",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲",
+            vehicle_type="4.2米",
+            volume=10.0,
+            load_rate=68,
+            est_distance=42,
+            est_duration=85,
+            calc_status=1,
+        )
+    )
+    db_session.commit()
+    run_compare(db_session, date(2026, 4, 20), 0.5)
+
+    def _get_db():
+        yield db_session
+
+    def _verify_bearer(request: Request) -> None:
+        if request.method == "OPTIONS":
+            return
+        request.state.user_id = 1
+
+    _core.dependency_overrides[get_db] = _get_db
+    _core.dependency_overrides[verify_bearer_token] = _verify_bearer
+    try:
+        with TestClient(_core) as c:
+            resp = c.get(
+                "/api/compare/export",
+                params={"route_date_from": "2026-04-20", "route_date_to": "2026-04-20"},
+            )
+        assert resp.status_code == 200
+        body = resp.content.decode("utf-8")
+        assert "SYS001" in body
+        assert "MAN001" in body
+    finally:
+        _core.dependency_overrides.clear()
