@@ -53,7 +53,9 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                     elif man_row.waybill_no < best.waybill_no:
                         best = man_row
 
-        if best is None:
+        # 重合率为 0 时不得占用手工运单：best_rate 初值为 -1，0.0 也会胜出，
+        # 会饿死后续本可完全/部分匹配该手工行的系统运单。
+        if best is None or best_rate <= 0:
             db.add(
                 CompareResult(
                     route_date=route_date,

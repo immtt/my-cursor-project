@@ -256,3 +256,73 @@ def test_overview_and_results_filter_by_warehouse(db_session):
 
     rows_wrong = fetch_results(db_session, rd, rd, None, "不存在仓")
     assert rows_wrong == []
+
+
+def test_run_compare_zero_overlap_does_not_starve_later_full_match(db_session):
+    """零重合不得占用手工运单，否则先扫描的系统行会饿死后续完全匹配。"""
+    rd = date(2026, 4, 23)
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_NONE",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店独有",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=rd,
+            waybill_no="MAN_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            vehicle_type="4.2米",
+            volume=10.0,
+            load_rate=68,
+            est_distance=42,
+            est_duration=85,
+            calc_status=1,
+        )
+    )
+    db_session.commit()
+
+    run_compare(db_session, rd, 0.5)
+
+    from app.models.entities import CompareResult
+
+    rows = db_session.query(CompareResult).all()
+    assert len(rows) == 2
+
+    sys_none = db_session.query(SysSuggest).filter(SysSuggest.waybill_no == "SYS_NONE").one()
+    sys_full = db_session.query(SysSuggest).filter(SysSuggest.waybill_no == "SYS_FULL").one()
+    man_full = db_session.query(ManualRoute).filter(ManualRoute.waybill_no == "MAN_FULL").one()
+
+    unmatched = next(r for r in rows if r.sys_id == sys_none.id)
+    assert unmatched.manual_id is None
+    assert unmatched.match_status == "none"
+    assert unmatched.store_match_rate == 0.0
+
+    paired = next(r for r in rows if r.sys_id == sys_full.id)
+    assert paired.manual_id == man_full.id
+    assert paired.match_status == "full"
+    assert paired.store_match_rate == 100.0
