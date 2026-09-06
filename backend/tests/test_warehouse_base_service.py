@@ -5,7 +5,7 @@ import tempfile
 
 from openpyxl import Workbook
 
-from app.models.entities import WarehouseBase
+from app.models.entities import WarehouseBase, WarehouseBusinessBrand
 from app.services.warehouse_base_service import (
     batch_supplement_warehouse_base_coordinates,
     create_warehouse_base,
@@ -223,3 +223,100 @@ def test_warehouse_base_import_header_only_clears_previous(db_session):
         assert db_session.query(WarehouseBase).count() == 0
     finally:
         os.remove(path)
+
+
+def test_warehouse_update_preserves_business_brand_logo_path(db_session):
+    """UI save always resends business_brands without logo_path; keep uploaded 图示."""
+    r = create_warehouse_base(
+        db_session,
+        _w(
+            warehouse_code="LOGO1",
+            warehouse_name="有图仓",
+            group_name="集团L",
+            brand="品牌甲",
+            address="上海市",
+            manager_phone="13800000000",
+            business_brands=[{"name": "品牌甲", "logo_as": "沿用A"}],
+        ),
+    )
+    brands = (
+        db_session.query(WarehouseBusinessBrand)
+        .filter(WarehouseBusinessBrand.warehouse_id == r.id)
+        .all()
+    )
+    assert len(brands) == 1
+    brands[0].logo_path = "wb1_1.png"
+    db_session.add(brands[0])
+    db_session.commit()
+    old_id = brands[0].id
+
+    u = update_warehouse_base(
+        db_session,
+        r.id,
+        {
+            "manager_phone": "13900000000",
+            "business_brands": [{"name": "品牌甲", "logo_as": "沿用A"}],
+        },
+    )
+    assert u is not None
+    assert u.manager_phone == "13900000000"
+    kept = (
+        db_session.query(WarehouseBusinessBrand)
+        .filter(WarehouseBusinessBrand.warehouse_id == r.id)
+        .all()
+    )
+    assert len(kept) == 1
+    assert kept[0].id == old_id
+    assert kept[0].logo_path == "wb1_1.png"
+    assert kept[0].name == "品牌甲"
+    assert kept[0].logo_as == "沿用A"
+
+
+def test_warehouse_update_keeps_logo_only_for_same_brand_name(db_session):
+    r = create_warehouse_base(
+        db_session,
+        _w(
+            warehouse_code="LOGO2",
+            warehouse_name="双品牌仓",
+            group_name="集团L",
+            brand="品牌甲;品牌乙",
+            address="北京市",
+            business_brands=[
+                {"name": "品牌甲", "logo_as": None},
+                {"name": "品牌乙", "logo_as": None},
+            ],
+        ),
+    )
+    brands = (
+        db_session.query(WarehouseBusinessBrand)
+        .filter(WarehouseBusinessBrand.warehouse_id == r.id)
+        .order_by(WarehouseBusinessBrand.sort_order, WarehouseBusinessBrand.id)
+        .all()
+    )
+    assert [b.name for b in brands] == ["品牌甲", "品牌乙"]
+    brands[0].logo_path = "wb2_a.png"
+    brands[1].logo_path = "wb2_b.png"
+    db_session.commit()
+    keep_id = brands[0].id
+
+    update_warehouse_base(
+        db_session,
+        r.id,
+        {
+            "manager_phone": "13700000000",
+            "business_brands": [
+                {"name": "品牌甲", "logo_as": None},
+                {"name": "品牌丙", "logo_as": None},
+            ],
+        },
+    )
+    kept = (
+        db_session.query(WarehouseBusinessBrand)
+        .filter(WarehouseBusinessBrand.warehouse_id == r.id)
+        .order_by(WarehouseBusinessBrand.sort_order, WarehouseBusinessBrand.id)
+        .all()
+    )
+    assert [b.name for b in kept] == ["品牌甲", "品牌丙"]
+    assert kept[0].id == keep_id
+    assert kept[0].logo_path == "wb2_a.png"
+    assert kept[1].logo_path is None

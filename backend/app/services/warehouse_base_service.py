@@ -296,24 +296,40 @@ def _replace_business_brands_from_payload(
     if items is not None:
         if not isinstance(items, list):
             raise ValueError("business_brands 须为数组")
-        db.query(WarehouseBusinessBrand).filter(
-            WarehouseBusinessBrand.warehouse_id == row.id
-        ).delete(synchronize_session=False)
-        for i, it in enumerate(items):
+        wanted: List[Tuple[str, Optional[str]]] = []
+        for it in items:
             if not isinstance(it, dict):
                 continue
             n = str(it.get("name") or "").strip()
             if not n:
                 continue
             la = str(it.get("logo_as") or "").strip() or None
-            db.add(
-                WarehouseBusinessBrand(
-                    warehouse_id=row.id,
-                    name=n,
-                    logo_as=la,
-                    sort_order=i,
+            wanted.append((n, la))
+        existing = (
+            db.query(WarehouseBusinessBrand)
+            .filter(WarehouseBusinessBrand.warehouse_id == row.id)
+            .order_by(WarehouseBusinessBrand.sort_order, WarehouseBusinessBrand.id)
+            .all()
+        )
+        unused = list(existing)
+        for i, (n, la) in enumerate(wanted):
+            match = next((b for b in unused if (b.name or "").strip() == n), None)
+            if match is not None:
+                unused.remove(match)
+                match.logo_as = la
+                match.sort_order = i
+            else:
+                db.add(
+                    WarehouseBusinessBrand(
+                        warehouse_id=row.id,
+                        name=n,
+                        logo_as=la,
+                        sort_order=i,
+                    )
                 )
-            )
+        for dead in unused:
+            db.delete(dead)
+        db.flush()
         return
     if not is_create:
         return
