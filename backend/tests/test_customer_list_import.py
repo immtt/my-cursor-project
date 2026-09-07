@@ -105,3 +105,137 @@ def test_import_upsert_customer_and_store(db_session):
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def _write_workbook(path: str, headers, rows) -> None:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "客户列表"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(1, c, h)
+    for row in rows:
+        ws.append(list(row))
+    wb.save(path)
+    wb.close()
+
+
+def test_sparse_reimport_preserves_optional_profile_fields(db_session):
+    """Missing optional headers must not NULL existing profile fields."""
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        _write_workbook(
+            path,
+            [
+                "客户代码",
+                "客户名称",
+                "联系电话",
+                "地址",
+                "所属承运商",
+                "客户备注",
+                "收货地址",
+                "收货人",
+                "收货电话",
+                "结算仓店距离（km）",
+                "收货坐标",
+            ],
+            [
+                [
+                    "C1",
+                    "测试门店A",
+                    "13800000000",
+                    "某地址A",
+                    "承运商甲",
+                    "备注甲",
+                    "收货地址A",
+                    "收货人甲",
+                    "13900000000",
+                    12.5,
+                    "116.5,31.5",
+                ]
+            ],
+        )
+        import_customer_list_workbook(
+            db_session, path, import_source="full", sheet_name="客户列表"
+        )
+        a = (
+            db_session.query(CustomerProfile)
+            .filter(CustomerProfile.customer_code == "C1")
+            .one()
+        )
+        assert a.contact_phone == "13800000000"
+        assert a.address == "某地址A"
+        assert a.carrier == "承运商甲"
+        assert a.remark == "备注甲"
+        assert a.delivery_address == "收货地址A"
+        assert a.consignee == "收货人甲"
+        assert a.consignee_phone == "13900000000"
+        assert a.settlement_warehouse_km == 12.5
+
+        _write_workbook(
+            path,
+            ["客户代码", "客户名称", "收货坐标"],
+            [["C1", "测试门店A改名", "117.1,32.2"]],
+        )
+        import_customer_list_workbook(
+            db_session, path, import_source="sparse", sheet_name="客户列表"
+        )
+        a = (
+            db_session.query(CustomerProfile)
+            .filter(CustomerProfile.customer_code == "C1")
+            .one()
+        )
+        assert a.customer_name == "测试门店A改名"
+        assert a.contact_phone == "13800000000"
+        assert a.address == "某地址A"
+        assert a.carrier == "承运商甲"
+        assert a.remark == "备注甲"
+        assert a.delivery_address == "收货地址A"
+        assert a.consignee == "收货人甲"
+        assert a.consignee_phone == "13900000000"
+        assert a.settlement_warehouse_km == 12.5
+        assert a.delivery_coordinate == "117.1,32.2"
+        assert a.import_source == "sparse"
+        sc = (
+            db_session.query(StoreCoordinate)
+            .filter(StoreCoordinate.store_name == "测试门店A改名")
+            .one()
+        )
+        assert abs(sc.longitude - 117.1) < 0.01
+        assert abs(sc.latitude - 32.2) < 0.01
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_present_blank_optional_column_clears_profile_field(db_session):
+    """A present optional column with a blank cell still clears that field."""
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        _write_workbook(
+            path,
+            ["客户代码", "客户名称", "联系电话", "地址", "收货坐标"],
+            [["C1", "测试门店A", "13800000000", "某地址A", "116.5,31.5"]],
+        )
+        import_customer_list_workbook(
+            db_session, path, import_source="full", sheet_name="客户列表"
+        )
+        _write_workbook(
+            path,
+            ["客户代码", "客户名称", "联系电话", "地址", "收货坐标"],
+            [["C1", "测试门店A", "", "", "116.5,31.5"]],
+        )
+        import_customer_list_workbook(
+            db_session, path, import_source="clear", sheet_name="客户列表"
+        )
+        a = (
+            db_session.query(CustomerProfile)
+            .filter(CustomerProfile.customer_code == "C1")
+            .one()
+        )
+        assert a.contact_phone is None
+        assert a.address is None
+    finally:
+        if os.path.exists(path):
+            os.remove(path)

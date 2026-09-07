@@ -13,6 +13,47 @@ from app.services.store_master_service import upsert_store_coordinate
 
 _REQUIRED = ("客户代码", "客户名称", "收货坐标")
 
+# Optional profile columns: only overwrite when the header is present so a
+# sparse re-import (required columns only, or a trimmed export) cannot NULL
+# out phone/address/carrier/etc. Blank cells in a present column still clear.
+_OPTIONAL_TEXT_COLUMNS = (
+    ("客户类型", "customer_type"),
+    ("营业状态", "business_status"),
+    ("联系人", "contact_name"),
+    ("营业时间", "business_hours"),
+    ("联系电话", "contact_phone"),
+    ("省", "province"),
+    ("市", "city"),
+    ("区", "district"),
+    ("县", "county"),
+    ("地址", "address"),
+    ("履约时效", "performance_sla"),
+    ("线路数", "line_count"),
+    ("所属线路", "route_line"),
+    ("开启电子签", "e_sign"),
+    ("最晚送达时间", "latest_delivery"),
+    ("认证状态", "auth_status"),
+    ("客户坐标", "customer_coordinate"),
+    ("司机上报坐标", "driver_coordinate"),
+    ("所属承运商", "carrier"),
+    ("员工认证明细", "staff_auth_detail"),
+    ("所属客户组", "customer_group"),
+    ("客户组起送量", "group_min_order"),
+    ("起送量类型", "min_order_type"),
+    ("起送量", "min_order"),
+    ("配送排程", "delivery_schedule"),
+    ("循环模式", "loop_mode"),
+    ("客户备注", "remark"),
+    ("收货人", "consignee"),
+    ("收货坐标", "delivery_coordinate"),
+    ("收货电话", "consignee_phone"),
+    ("收货地址", "delivery_address"),
+    ("收货省", "delivery_province"),
+    ("收货市", "delivery_city"),
+    ("收货区", "delivery_district"),
+    ("收货街道", "delivery_street"),
+)
+
 
 def _cell_str(ws, r: int, c: int) -> str:
     v = ws.cell(r, c).value
@@ -126,12 +167,12 @@ def import_customer_list_workbook(
                 c1 = col.get(field)
                 return _cell_str(ws, r, c1) if c1 else ""
 
-            def text_f(field: str) -> Optional[str]:
+            def apply_optional_text(field: str, attr: str) -> None:
                 c1 = col.get(field)
                 if not c1:
-                    return None
+                    return
                 s = _cell_str(ws, r, c1)
-                return s if s else None
+                setattr(row, attr, s if s else None)
 
             row = (
                 db.query(CustomerProfile)
@@ -141,59 +182,15 @@ def import_customer_list_workbook(
             if not row:
                 row = CustomerProfile(customer_code=code)
                 db.add(row)
-            # 字段写入
             row.customer_name = cell_field("客户名称") or code
-            row.customer_type = text_f("客户类型")
-            row.business_status = text_f("营业状态")
-            row.contact_name = text_f("联系人")
-            row.business_hours = text_f("营业时间")
-            row.contact_phone = text_f("联系电话")
-            row.province = text_f("省")
-            row.city = text_f("市")
-            row.district = text_f("区")
-            row.county = text_f("县")
-            if col.get("地址"):
-                v = _cell_str(ws, r, col["地址"])
-                row.address = v if v else None
-            else:
-                row.address = None
-            row.performance_sla = text_f("履约时效")
-            row.line_count = text_f("线路数")
-            row.route_line = text_f("所属线路")
-            row.e_sign = text_f("开启电子签")
-            row.latest_delivery = text_f("最晚送达时间")
-            row.auth_status = text_f("认证状态")
+            for header, attr in _OPTIONAL_TEXT_COLUMNS:
+                apply_optional_text(header, attr)
             if col.get("结算仓店距离（km）"):
                 row.settlement_warehouse_km = _cell_float_opt(
                     ws, r, col["结算仓店距离（km）"]
                 )
             if col.get("仓店距离（km）"):
                 row.warehouse_store_km = _cell_float_opt(ws, r, col["仓店距离（km）"])
-            row.customer_coordinate = text_f("客户坐标")
-            row.driver_coordinate = text_f("司机上报坐标")
-            row.carrier = text_f("所属承运商")
-            if col.get("员工认证明细"):
-                v = _cell_str(ws, r, col["员工认证明细"])
-                row.staff_auth_detail = v if v else None
-            row.customer_group = text_f("所属客户组")
-            row.group_min_order = text_f("客户组起送量")
-            row.min_order_type = text_f("起送量类型")
-            row.min_order = text_f("起送量")
-            row.delivery_schedule = text_f("配送排程")
-            row.loop_mode = text_f("循环模式")
-            if col.get("客户备注"):
-                v = _cell_str(ws, r, col["客户备注"])
-                row.remark = v if v else None
-            row.consignee = text_f("收货人")
-            row.delivery_coordinate = text_f("收货坐标")
-            row.consignee_phone = text_f("收货电话")
-            if col.get("收货地址"):
-                v = _cell_str(ws, r, col["收货地址"])
-                row.delivery_address = v if v else None
-            row.delivery_province = text_f("收货省")
-            row.delivery_city = text_f("收货市")
-            row.delivery_district = text_f("收货区")
-            row.delivery_street = text_f("收货街道")
             row.import_source = tag
             n_cp += 1
 
