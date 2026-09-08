@@ -1,6 +1,7 @@
 """仓店距离 Excel：与 scripts/import_store_distances.py 表头一致；供 API 导入/导出。"""
 from __future__ import annotations
 
+import math
 import re
 from io import BytesIO
 from pathlib import Path
@@ -16,6 +17,9 @@ HEADER_C1_COORD = "客户1坐标"
 HEADER_C2 = "客户2"
 HEADER_C2_COORD = "客户2坐标"
 HEADER_DIST = "距离（km）"
+
+# 店间段超过地球周长仍写入时，补算 `est_duration = km/35*60` 会超出 SQLite INTEGER。
+MAX_STORE_PAIR_KM = 100_000.0
 
 
 def _norm_cell(v) -> str:
@@ -40,7 +44,21 @@ def parse_lng_lat(raw: str) -> Optional[Tuple[float, float]]:
         lat = float(parts[1])
     except ValueError:
         return None
+    if not (math.isfinite(lng) and math.isfinite(lat)):
+        return None
+    if not (-180 <= lng <= 180 and -90 <= lat <= 90):
+        return None
     return lng, lat
+
+
+def require_valid_distance_km(distance_km: float) -> float:
+    try:
+        v = float(distance_km)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("距离（km）无效") from exc
+    if not math.isfinite(v) or v < 0 or v > MAX_STORE_PAIR_KM:
+        raise ValueError(f"距离（km）须为 0～{int(MAX_STORE_PAIR_KM)} 的有限数值")
+    return v
 
 
 def parse_distance_km(raw) -> Optional[float]:
@@ -48,7 +66,11 @@ def parse_distance_km(raw) -> Optional[float]:
     if not s:
         return None
     try:
-        return float(s)
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    try:
+        return require_valid_distance_km(v)
     except ValueError:
         return None
 
@@ -78,6 +100,7 @@ def upsert_store_coord(
 
 
 def upsert_store_pair_distance(db: Session, store_from: str, store_to: str, distance_km: float) -> None:
+    distance_km = require_valid_distance_km(distance_km)
     row = (
         db.query(StorePairDistance)
         .filter(StorePairDistance.store_from == store_from, StorePairDistance.store_to == store_to)

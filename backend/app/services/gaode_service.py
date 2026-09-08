@@ -22,6 +22,7 @@ from app.models.entities import (
 
 _AMAP_BASE = "https://restapi.amap.com/v3"
 _HTTPX_TIMEOUT = 20.0
+_SQLITE_INT_MAX = 2**63 - 1
 
 # 写死：指定始发仓经纬度 (经度, 纬度)，优先于 `store_coordinate` / 缓存 / 高德
 _HARDCODED_WAREHOUSE_LNGLAT: Dict[str, Tuple[float, float]] = {
@@ -419,6 +420,13 @@ def _table_leg_speed_kmh() -> float:
     return 40.0
 
 
+def _sqlite_int_minutes(minutes: float) -> int:
+    """补算时效写入 SQLite INTEGER；拒绝非有限或超出有符号 64 位的值。"""
+    if not math.isfinite(minutes) or minutes > _SQLITE_INT_MAX:
+        raise ValueError("route duration out of range")
+    return max(1, int(minutes))
+
+
 def estimate_manual_route_amap(
     db: Session, warehouse: str, stores: List[str]
 ) -> Tuple[float, int, List[List[float]], List[str]]:
@@ -477,8 +485,12 @@ def estimate_manual_route_amap(
         cur = dest
 
     # 对外：千米、分钟（与 manual_route.est_distance / est_duration 一致）
-    dur_min = max(1, int(round(total_s / 60.0)))
+    if not math.isfinite(total_m) or not math.isfinite(total_s) or total_s < 0:
+        raise ValueError("route duration out of range")
+    dur_min = _sqlite_int_minutes(round(total_s / 60.0))
     dist_km = round(total_m / 1000.0, 2)
+    if not math.isfinite(dist_km):
+        raise ValueError("invalid route distance")
     return dist_km, dur_min, merged, visit_stores
 
 
@@ -616,8 +628,10 @@ def estimate_route(
         else:
             path.extend(seg)
         cur = nxt
-    duration = int((total_dist / 35) * 60)
-    return round(total_dist, 2), max(duration, 1), path
+    if not math.isfinite(total_dist) or total_dist < 0:
+        raise ValueError("invalid route distance")
+    duration = _sqlite_int_minutes((total_dist / 35) * 60)
+    return round(total_dist, 2), duration, path
 
 
 def _estimate_manual_bundle_with_retry(

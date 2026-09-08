@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.entities import StoreCoordinate, StorePairDistance
+from app.services.store_distance_excel import require_valid_distance_km
 
 
 def _paginate(
@@ -217,6 +218,7 @@ def create_store_pair_distance(
     )
     if ex:
         raise ValueError("该有向边已存在")
+    distance_km = require_valid_distance_km(distance_km)
     row = StorePairDistance(
         store_from=sf, store_to=st, distance_km=distance_km
     )
@@ -262,7 +264,7 @@ def update_store_pair_distance(
         if o:
             raise ValueError("该有向边已存在")
     if distance_km is not None:
-        row.distance_km = distance_km
+        row.distance_km = require_valid_distance_km(distance_km)
     db.commit()
     db.refresh(row)
     return row
