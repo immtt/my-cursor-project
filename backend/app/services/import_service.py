@@ -41,11 +41,22 @@ REQUIRED_COLUMNS = [
     "装载率",
 ]
 
+# SQLite INTEGER is signed 64-bit; values outside this range raise OverflowError on flush.
+_SQLITE_INT_MIN = -(2**63)
+_SQLITE_INT_MAX = 2**63 - 1
+
 
 def _parse_date(value):
     if hasattr(value, "date"):
         return value.date()
     return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def _parse_est_duration(value) -> int:
+    duration = int(value or 0)
+    if duration < _SQLITE_INT_MIN or duration > _SQLITE_INT_MAX:
+        raise ValueError("预计时效超出有效整数范围")
+    return duration
 
 
 def _normalize_header_label(raw: str) -> str:
@@ -198,7 +209,7 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
             touched_dates.add(route_date)
             if dataset_type == "system":
                 est_distance = float(values[header_map.get("预计公里数", -1)] or 0)
-                est_duration = int(values[header_map.get("预计时效", -1)] or 0)
+                est_duration = _parse_est_duration(values[header_map.get("预计时效", -1)])
                 staged_records.append(
                     SysSuggest(
                         route_date=route_date,
