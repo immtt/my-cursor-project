@@ -71,6 +71,7 @@ from app.services.store_master_service import (
     get_store_pair_distance,
     list_store_coordinates,
     list_store_pair_distances,
+    store_coordinate_to_item,
     update_store_coordinate,
     update_store_pair_distance,
 )
@@ -572,13 +573,7 @@ def api_create_store_coordinates(body: StoreCoordinateCreate, db: Session = Depe
             latitude=body.latitude,
             data_source=body.data_source,
         )
-        return {
-            "id": r.id,
-            "store_name": r.store_name,
-            "longitude": r.longitude,
-            "latitude": r.latitude,
-            "data_source": r.data_source,
-        }
+        return store_coordinate_to_item(r)
     except ValueError as e:
         if "已存在" in str(e):
             raise HTTPException(status_code=409, detail=str(e)) from e
@@ -590,13 +585,7 @@ def api_get_store_coordinate(row_id: int, db: Session = Depends(get_db)):
     r = get_store_coordinate(db, row_id)
     if not r:
         raise HTTPException(status_code=404, detail="NOT_FOUND")
-    return {
-        "id": r.id,
-        "store_name": r.store_name,
-        "longitude": r.longitude,
-        "latitude": r.latitude,
-        "data_source": r.data_source,
-    }
+    return store_coordinate_to_item(r)
 
 
 @router.put("/store-coordinates/{row_id}")
@@ -612,13 +601,7 @@ def api_update_store_coordinate(
             latitude=body.latitude,
             data_source=body.data_source,
         )
-        return {
-            "id": r.id,
-            "store_name": r.store_name,
-            "longitude": r.longitude,
-            "latitude": r.latitude,
-            "data_source": r.data_source,
-        }
+        return store_coordinate_to_item(r)
     except ValueError as e:
         d = str(e)
         if d == "NOT_FOUND":

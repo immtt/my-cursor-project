@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.entities import StoreCoordinate, StorePairDistance
+from app.utils.finite import json_safe_float, require_lng_lat
 
 
 def _paginate(
@@ -15,6 +16,17 @@ def _paginate(
     total = q.count()
     rows = q.offset(skip).limit(limit).all()
     return rows, total
+
+
+def store_coordinate_to_item(r: StoreCoordinate) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "store_name": r.store_name,
+        "longitude": json_safe_float(r.longitude),
+        "latitude": json_safe_float(r.latitude),
+        "data_source": r.data_source,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
 
 
 def list_store_coordinates(
@@ -27,17 +39,7 @@ def list_store_coordinates(
         q = q.filter(StoreCoordinate.store_name.like(like))
     rows, total = _paginate(q, max(0, skip), min(500, max(1, limit)))
     return {
-        "items": [
-            {
-                "id": r.id,
-                "store_name": r.store_name,
-                "longitude": r.longitude,
-                "latitude": r.latitude,
-                "data_source": r.data_source,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ],
+        "items": [store_coordinate_to_item(r) for r in rows],
         "total": total,
         "skip": skip,
         "limit": limit,
@@ -59,6 +61,7 @@ def create_store_coordinate(
     name = (store_name or "").strip()
     if not name:
         raise ValueError("store_name 不能为空")
+    longitude, latitude = require_lng_lat(longitude, latitude)
     exists = (
         db.query(StoreCoordinate).filter(StoreCoordinate.store_name == name).first()
     )
@@ -100,10 +103,10 @@ def update_store_coordinate(
         if o:
             raise ValueError(f"门店名称已存在: {n}")
         row.store_name = n
-    if longitude is not None:
-        row.longitude = longitude
-    if latitude is not None:
-        row.latitude = latitude
+    if longitude is not None or latitude is not None:
+        new_lng = row.longitude if longitude is None else longitude
+        new_lat = row.latitude if latitude is None else latitude
+        row.longitude, row.latitude = require_lng_lat(new_lng, new_lat)
     if data_source is not None:
         row.data_source = data_source.strip() or None
     db.commit()
@@ -124,6 +127,7 @@ def upsert_store_coordinate(
     name = (store_name or "").strip()
     if not name:
         raise ValueError("store_name 不能为空")
+    longitude, latitude = require_lng_lat(longitude, latitude)
     row = (
         db.query(StoreCoordinate)
         .filter(StoreCoordinate.store_name == name)
