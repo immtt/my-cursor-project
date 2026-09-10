@@ -91,7 +91,8 @@ def test_store_coordinate_api_rejects_overflow_json_number():
             "/api/store-coordinates",
             '{"store_name":"PoisonStore","longitude":1e309,"latitude":31.2}',
         )
-        assert r.status_code in (400, 422)
+        assert r.status_code == 422
+        assert "finite" in r.text.lower() or "detail" in r.text
         listed = client.get("/api/store-coordinates")
         assert listed.status_code == 200
         assert listed.json()["total"] == 0

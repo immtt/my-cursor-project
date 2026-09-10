@@ -21,6 +21,17 @@ def json_safe_float(value: Any) -> Optional[float]:
     return parse_finite_or_none(value)
 
 
+def to_jsonable(obj: Any) -> Any:
+    """Replace Inf/NaN so Starlette JSONResponse can serialize validation errors."""
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    return obj
+
+
 def require_finite(value: Any, *, field: str) -> float:
     try:
         v = float(value)
