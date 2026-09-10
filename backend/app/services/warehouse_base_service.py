@@ -12,6 +12,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.entities import WarehouseBase, WarehouseBusinessBrand
+from app.utils.finite import json_safe_float, parse_finite_or_none
 
 # 导出表头顺序：在「仓管理」模板基础上，于「仓库名称」后插入「集团」
 _EXCEL_HEADERS: List[Tuple[str, str]] = [
@@ -60,19 +61,19 @@ def _dt_iso(v: Optional[datetime]) -> Optional[str]:
 def _cell_str(v: Any) -> Optional[str]:
     if v is None:
         return None
-    if isinstance(v, float) and v == int(v):
-        return str(int(v))
+    if isinstance(v, float):
+        finite = parse_finite_or_none(v)
+        if finite is None:
+            return None
+        if finite == int(finite):
+            return str(int(finite))
+        v = finite
     s = str(v).strip()
     return s if s else None
 
 
 def _cell_float(v: Any) -> Optional[float]:
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    return parse_finite_or_none(v)
 
 
 def business_brand_to_item(b: WarehouseBusinessBrand) -> Dict[str, Any]:
@@ -106,10 +107,10 @@ def warehouse_base_to_item(row: WarehouseBase) -> Dict[str, Any]:
         "property_type": row.property_type,
         "receiver_contact": row.receiver_contact,
         "receiver_phone": row.receiver_phone,
-        "area_sqm": row.area_sqm,
+        "area_sqm": json_safe_float(row.area_sqm),
         "coverage_region": row.coverage_region,
         "zone_function": row.zone_function,
-        "expected_store_count": row.expected_store_count,
+        "expected_store_count": json_safe_float(row.expected_store_count),
         "monthly_covered_stores": row.monthly_covered_stores,
         "opening_date": row.opening_date,
         "sku_count_text": row.sku_count_text,
@@ -173,11 +174,17 @@ def _set_str_attr(row: WarehouseBase, k: str, v: Any) -> None:
 def _set_float_attr(row: WarehouseBase, k: str, v: Any) -> None:
     if v is None or v == "":
         setattr(row, k, None)
-    else:
-        try:
-            setattr(row, k, float(v))
-        except (TypeError, ValueError):
-            setattr(row, k, None)
+        return
+    parsed = parse_finite_or_none(v)
+    if parsed is not None:
+        setattr(row, k, parsed)
+        return
+    try:
+        float(v)
+    except (TypeError, ValueError):
+        setattr(row, k, None)
+        return
+    raise ValueError(f"{k} 须为有限数值")
 
 
 def _apply_geocode_to_warehouse_row(db: Session, row: WarehouseBase) -> None:

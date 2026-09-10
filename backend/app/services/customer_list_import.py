@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import CustomerProfile
 from app.services.store_master_service import upsert_store_coordinate
+from app.utils.finite import parse_finite_or_none
 
 _REQUIRED = ("客户代码", "客户名称", "收货坐标")
 
@@ -28,18 +30,7 @@ def _cell_str(ws, r: int, c: int) -> str:
 
 
 def _cell_float_opt(ws, r: int, c: int) -> Optional[float]:
-    v = ws.cell(r, c).value
-    if v is None:
-        return None
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return float(v)
-    t = str(v).strip()
-    if not t:
-        return None
-    try:
-        return float(t)
-    except ValueError:
-        return None
+    return parse_finite_or_none(ws.cell(r, c).value)
 
 
 def parse_lnglat(s: str) -> Optional[Tuple[float, float]]:
@@ -65,6 +56,8 @@ def parse_lnglat(s: str) -> Optional[Tuple[float, float]]:
             lng, lat = float(parts[0].strip()), float(parts[1].strip())
         except (ValueError, TypeError):
             return None
+    if not (math.isfinite(lng) and math.isfinite(lat)):
+        return None
     if not (-180 <= lng <= 180 and -90 <= lat <= 90):
         return None
     return (lng, lat)

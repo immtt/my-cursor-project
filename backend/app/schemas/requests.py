@@ -41,15 +41,15 @@ class ExportRequest(BaseModel):
 
 class StoreCoordinateCreate(BaseModel):
     store_name: str
-    longitude: float
-    latitude: float
+    longitude: float = Field(allow_inf_nan=False, ge=-180, le=180)
+    latitude: float = Field(allow_inf_nan=False, ge=-90, le=90)
     data_source: Optional[str] = None
 
 
 class StoreCoordinateUpdate(BaseModel):
     store_name: Optional[str] = None
-    longitude: Optional[float] = None
-    latitude: Optional[float] = None
+    longitude: Optional[float] = Field(default=None, allow_inf_nan=False, ge=-180, le=180)
+    latitude: Optional[float] = Field(default=None, allow_inf_nan=False, ge=-90, le=90)
     data_source: Optional[str] = None
 
 
@@ -90,8 +90,8 @@ class _CustomerProfileOptionalFields(BaseModel):
     e_sign: Optional[str] = None
     latest_delivery: Optional[str] = None
     auth_status: Optional[str] = None
-    settlement_warehouse_km: Optional[float] = None
-    warehouse_store_km: Optional[float] = None
+    settlement_warehouse_km: Optional[float] = Field(default=None, allow_inf_nan=False)
+    warehouse_store_km: Optional[float] = Field(default=None, allow_inf_nan=False)
     customer_coordinate: Optional[str] = None
     driver_coordinate: Optional[str] = None
     carrier: Optional[str] = None
@@ -147,10 +147,10 @@ class _WarehouseBaseOptionalOnly(BaseModel):
     property_type: Optional[str] = None
     receiver_contact: Optional[str] = None
     receiver_phone: Optional[str] = None
-    area_sqm: Optional[float] = None
+    area_sqm: Optional[float] = Field(default=None, allow_inf_nan=False)
     coverage_region: Optional[str] = None
     zone_function: Optional[str] = None
-    expected_store_count: Optional[float] = None
+    expected_store_count: Optional[float] = Field(default=None, allow_inf_nan=False)
     monthly_covered_stores: Optional[str] = None
     opening_date: Optional[str] = None
     sku_count_text: Optional[str] = None

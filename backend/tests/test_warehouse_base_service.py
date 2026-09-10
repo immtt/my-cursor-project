@@ -223,3 +223,30 @@ def test_warehouse_base_import_header_only_clears_previous(db_session):
         assert db_session.query(WarehouseBase).count() == 0
     finally:
         os.remove(path)
+
+
+def test_warehouse_import_skips_nonfinite_area(db_session):
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "仓管理"
+        ws.append(
+            ["仓库代码", "仓库名称", "集团", "仓库地址", "品牌", "仓库面积", "预计覆盖门店数"]
+        )
+        ws.append(["N1", "新仓", "某集团", "上海市路1号", "新品牌", float("inf"), 1e309])
+        wb.save(path)
+        wb.close()
+        out = import_warehouse_workbook(db_session, path, "inf-area")
+        assert out["ok"] is True
+        assert out["upserted_rows"] == 1
+        r0 = get_by_warehouse_code(db_session, "N1")
+        assert r0 is not None
+        assert r0.area_sqm is None
+        assert r0.expected_store_count is None
+        from fastapi.responses import JSONResponse
+
+        JSONResponse(warehouse_base_to_item(r0))
+    finally:
+        os.remove(path)

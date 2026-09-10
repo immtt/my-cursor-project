@@ -11,6 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.entities import CustomerProfile
+from app.utils.finite import json_safe_float, require_finite
 
 # 与 `customer_list_import` 中写入字段对应的表头顺序一致，便于用导出文件再导入
 _CUSTOMER_EXCEL_HEADER_ATTRS: List[Tuple[str, str]] = [
@@ -93,8 +94,8 @@ def customer_profile_to_item(row: CustomerProfile) -> Dict[str, Any]:
         "e_sign": row.e_sign,
         "latest_delivery": row.latest_delivery,
         "auth_status": row.auth_status,
-        "settlement_warehouse_km": row.settlement_warehouse_km,
-        "warehouse_store_km": row.warehouse_store_km,
+        "settlement_warehouse_km": json_safe_float(row.settlement_warehouse_km),
+        "warehouse_store_km": json_safe_float(row.warehouse_store_km),
         "customer_coordinate": row.customer_coordinate,
         "driver_coordinate": row.driver_coordinate,
         "carrier": row.carrier,
@@ -186,7 +187,7 @@ def _apply_payload(row: CustomerProfile, data: Dict[str, Any], *, for_create: bo
             if v is None or v == "":
                 setattr(row, k, None)
             else:
-                setattr(row, k, float(v))
+                setattr(row, k, require_finite(v, field=k))
 
 
 def list_customer_profiles(
