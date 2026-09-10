@@ -3,6 +3,7 @@ from typing import Optional
 
 import logging
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -39,7 +40,10 @@ _core.include_router(router, prefix="/api")
 @_core.exception_handler(RequestValidationError)
 async def _request_validation_handler(_request, exc: RequestValidationError):
     # Default handler JSON-encodes pydantic `input: inf` and HTTP 500s.
-    return JSONResponse(status_code=422, content={"detail": to_jsonable(exc.errors())})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": to_jsonable(jsonable_encoder(exc.errors()))},
+    )
 
 
 # 与 import-template 同一策略的独立路径；挂在此处保证 uvicorn 入口 app.main:app 必含本 GET（若 openapi 无本 path，即未重载到当前文件）
