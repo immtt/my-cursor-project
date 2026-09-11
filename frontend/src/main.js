@@ -2062,8 +2062,8 @@ function buildCompareResultTableRowsHtml(rows) {
         `<tr>
             <td><button type="button" class="btn btn--map map-btn" data-crid="${r.id}">地图</button></td>
             ${formatCompareWaybillCell(r.sys_waybill_no, r.manual_waybill_no)}
-            <td>${r.sys_vehicle_type ?? "—"}</td>
-            <td>${r.manual_vehicle_type ?? "—"}</td>
+            <td>${escapeHtml(String(r.sys_vehicle_type ?? "—"))}</td>
+            <td>${escapeHtml(String(r.manual_vehicle_type ?? "—"))}</td>
             <td>${matchStatusBadge(r.match_status)}</td>
             <td>${r.store_match_rate ?? "—"}</td>
             <td class="cell-stores">${r.same_stores != null && r.same_stores !== "" ? escapeHtml(String(r.same_stores)) : "—"}</td>
@@ -3591,7 +3591,7 @@ function renderRouteMap() {
             : `<span><span class="map-legend-swatch map-legend-swatch--system">■</span> 系统建议路线</span>`;
 
     metaEl.innerHTML = `
-      <div><strong>${data.warehouse_name || "—"}</strong></div>
+      <div><strong>${escapeHtml(data.warehouse_name || "—")}</strong></div>
       <div style="margin-top:8px">${matchStatusBadge(data.match_status)}</div>
       <div class="map-meta__stats" style="margin-top:10px;font-size:0.88rem;color:var(--text-secondary);line-height:1.6">
         <span>匹配度 <strong style="color:var(--text)">${matchRateDisp}</strong></span>
