@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 import math
@@ -34,20 +33,6 @@ def _mock_geocode(address_name: str) -> tuple[float, float]:
     lng = 100 + (int(raw[:6], 16) % 3000) / 1000
     lat = 20 + (int(raw[6:12], 16) % 2000) / 1000
     return lng, lat
-
-
-def _list_store_coordinate_names(db: Session) -> List[str]:
-    return [r[0] for r in db.query(StoreCoordinate.store_name).all()]
-
-
-def _best_similar_store_name(db: Session, name: str, cutoff: float = 0.55) -> Optional[str]:
-    if not name or not str(name).strip():
-        return None
-    candidates = _list_store_coordinate_names(db)
-    if not candidates:
-        return None
-    matches = difflib.get_close_matches(name.strip(), candidates, n=1, cutoff=cutoff)
-    return matches[0] if matches else None
 
 
 def _row_lnglat_from_store_table(db: Session, store_name: str) -> Optional[Tuple[float, float]]:
@@ -196,7 +181,7 @@ def sync_resolved_lnglat_to_cache_tables(
 
 
 def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[float, float]:
-    """手动补算用：门店表精确/相似名 → 缓存 → 高德（地理编码/关键词）→ 模拟。"""
+    """手动补算用：门店表精确名 → 缓存 → 高德（地理编码/关键词）→ 模拟。"""
     label = (label or "").strip()
     if not label:
         raise ValueError("address is empty")
@@ -205,11 +190,6 @@ def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[fl
     xy = _row_lnglat_from_store_table(db, label)
     if xy:
         return xy
-    similar = _best_similar_store_name(db, label)
-    if similar:
-        xy2 = _row_lnglat_from_store_table(db, similar)
-        if xy2:
-            return xy2
     cached = db.query(AddressCache).filter(AddressCache.address_name == label).first()
     if cached:
         return cached.longitude, cached.latitude
@@ -496,7 +476,7 @@ def estimate_bundle_for_manual(
 
 
 def get_or_create_coord(db: Session, address_name: str, address_type: str):
-    """地图/模拟路径取点：门店与补算一致，走门店主数据表精确/相似名 + 缓存 + 高德 + 模拟；仓库不走门店相似匹配。"""
+    """地图/模拟路径取点：门店与补算一致，走门店主数据表精确名 + 缓存 + 高德 + 模拟。"""
     if not address_name:
         raise ValueError("address is empty")
     wh_name = address_name.strip()
