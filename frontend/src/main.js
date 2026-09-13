@@ -8,8 +8,14 @@ const API_PORT = (() => {
   return Number.isFinite(n) && n > 0 ? n : 8080;
 })();
 
+/** README / start-dev.sh：静态页默认 :5173，接口 :8080。此时必须忽略同域 __API_ORIGIN__。 */
+function isDocumentedSplitPortFrontend(pagePort) {
+  return String(pagePort == null ? "" : pagePort) === "5173";
+}
+
 function inferApiOrigin() {
-  if (window.__API_ORIGIN__) {
+  const pagePort = window.location && window.location.port != null ? String(window.location.port) : "";
+  if (window.__API_ORIGIN__ && !isDocumentedSplitPortFrontend(pagePort)) {
     let s = String(window.__API_ORIGIN__).replace(/\/$/, "");
     if (s.toLowerCase().endsWith("/api")) {
       s = s.slice(0, -4);
