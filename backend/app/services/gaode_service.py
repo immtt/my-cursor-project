@@ -231,7 +231,9 @@ def resolve_lnglat_for_manual(db: Session, label: str, *, kind: str) -> Tuple[fl
                 db.commit()
                 return ll
         except (httpx.HTTPError, ValueError, TypeError, KeyError):
-            db.rollback()
+            # AMap HTTP/parse errors must not session.rollback(): backfill keeps
+            # sibling ManualRoute estimate writes uncommitted in this session.
+            pass
     lng, lat = _mock_geocode(label)
     db.add(AddressCache(address_name=label, address_type=kind, longitude=lng, latitude=lat))
     db.commit()
@@ -522,7 +524,8 @@ def get_or_create_coord(db: Session, address_name: str, address_type: str):
                 db.commit()
                 return ll
         except (httpx.HTTPError, ValueError, TypeError, KeyError):
-            db.rollback()
+            # Same as resolve_lnglat_for_manual: do not discard sibling dirty writes.
+            pass
     lng, lat = _mock_geocode(address_name)
     db.add(AddressCache(address_name=address_name, address_type=address_type, longitude=lng, latitude=lat))
     db.commit()
@@ -808,7 +811,9 @@ def ensure_route_for_sys_suggest(db: Session, row: SysSuggest) -> Tuple[bool, Op
                 db.commit()
                 return True, path
         except (httpx.HTTPError, ValueError, TypeError, KeyError):
-            db.rollback()
+            # Driving/geocode failures are not DB errors; rollback would drop
+            # uncommitted estimate/polyline writes already sitting on this session.
+            pass
     cached = decode_route_polyline(row.route_polyline)
     if cached:
         return True, cached
@@ -842,7 +847,7 @@ def ensure_route_for_manual_row(db: Session, row: ManualRoute) -> Tuple[bool, Op
                 db.commit()
                 return True, path
         except (httpx.HTTPError, ValueError, TypeError, KeyError):
-            db.rollback()
+            pass
     cached = decode_route_polyline(row.route_polyline)
     if cached:
         return True, cached
