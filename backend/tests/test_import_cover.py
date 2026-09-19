@@ -205,6 +205,44 @@ def test_import_marks_same_day_other_manual_rows_inactive(db_session):
     assert cur.is_active == 1
 
 
+def test_import_blank_waybill_is_rejected_and_does_not_deactivate_same_day(db_session):
+    """Excel 空单元格为 None；str(None) 曾变成字面量 'None' 并作为成功行，进而把同日其它运单全部置无效。"""
+    d = date(2026, 4, 20)
+    _seed_sys_suggest(db_session, "KEEP_ME", d)
+    path = os.path.join(tempfile.gettempdir(), "sys_blank_waybill.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "排线日期",
+            "运单号",
+            "归属线路",
+            "始发仓库",
+            "拼载门店",
+            "车辆类型",
+            "配送体积",
+            "装载率",
+            "预计公里数",
+            "预计时效",
+        ]
+    )
+    ws.append(
+        [d, None, "线路A", "仓库1", "门店甲", "4.2米标箱", 2.0, "70%", 30, 60],
+    )
+    wb.save(path)
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["success_rows"] == 0
+    assert out["failed_rows"] == 1
+    assert out["same_day_deactivated"] == 0
+    assert not any(r.waybill_no == "None" for r in db_session.query(SysSuggest).all())
+    kept = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "KEEP_ME")
+        .one()
+    )
+    assert kept.is_active == 1
+
+
 def test_manual_import_does_not_touch_system_rows_on_same_date(db_session):
     d = date(2026, 4, 22)
     _seed_sys_suggest(db_session, "SYSX", d)
