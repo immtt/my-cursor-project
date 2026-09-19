@@ -48,6 +48,13 @@ def _parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
 
 
+def _text_value(value) -> str:
+    """Excel 空单元格是 None；str(None) 会变成字面量 'None' 并绕过非空校验。"""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def _normalize_header_label(raw: str) -> str:
     """将「配送体积(m³)」「装载率(%)」等与必填列名对齐。"""
     s = raw.strip()
@@ -182,11 +189,11 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
         values = [sheet.cell(row=row_no, column=i + 1).value for i in range(len(headers))]
         try:
             route_date = _parse_date(values[header_map["排线日期"]])
-            waybill_no = str(values[header_map["运单号"]]).strip()
-            route_line = str(values[header_map["归属线路"]]).strip()
-            warehouse_name = str(values[header_map["始发仓库"]]).strip()
-            stores = str(values[header_map["拼载门店"]]).strip()
-            vehicle_type = str(values[header_map["车辆类型"]]).strip()
+            waybill_no = _text_value(values[header_map["运单号"]])
+            route_line = _text_value(values[header_map["归属线路"]])
+            warehouse_name = _text_value(values[header_map["始发仓库"]])
+            stores = _text_value(values[header_map["拼载门店"]])
+            vehicle_type = _text_value(values[header_map["车辆类型"]])
             volume = float(values[header_map["配送体积"]])
             load_rate = float(str(values[header_map["装载率"]]).replace("%", ""))
 
