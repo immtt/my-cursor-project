@@ -13,6 +13,17 @@ def test_business_api_returns_401_without_token():
     assert r.json().get("detail")
 
 
+def test_compare_export_returns_401_without_token():
+    """Browser window.open cannot send Bearer; unauthenticated export must stay 401."""
+    with TestClient(_core) as c:
+        r = c.get(
+            "/api/compare/export",
+            params={"route_date_from": "2026-04-20", "route_date_to": "2026-04-20"},
+        )
+    assert r.status_code == 401
+    assert r.json().get("detail")
+
+
 def test_bootstrap_seeds_first_admin_user(db_session, monkeypatch):
     monkeypatch.setenv("BOOTSTRAP_ADMIN_USER", "root_admin")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_PASS", "root_secret_x")
