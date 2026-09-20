@@ -2201,7 +2201,7 @@ function overviewSection(o) {
     </div>
     <details style="margin-bottom:20px">
       <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-secondary);font-weight:500">查看概览 JSON</summary>
-      <div class="code-block" style="margin-top:10px"><pre>${JSON.stringify(o, null, 2)}</pre></div>
+      <div class="code-block" style="margin-top:10px"><pre>${escapeHtml(JSON.stringify(o, null, 2))}</pre></div>
     </details>`;
 }
 
@@ -3216,7 +3216,7 @@ function renderResult() {
       a,
     )}&route_date_to=${encodeURIComponent(b)}`;
     if (wh) url += `&warehouse_name=${encodeURIComponent(wh)}`;
-    window.open(url, "_blank");
+    void downloadBlobFromApiUrl(url, `compare_result_${a}_${b}.csv`);
   };
   document.getElementById("resultTable").onclick = (ev) => {
     const btn = ev.target.closest(".map-btn");
