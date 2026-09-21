@@ -2,13 +2,15 @@ import json
 import os
 import tempfile
 from datetime import date
+from io import BytesIO
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from app.models.entities import ManualRoute, SysSuggest
 from app.services.gaode_service import backfill_manual_routes_by_batch
 from app.services.import_service import (
+    build_import_template_xlsx,
     fetch_active_import_page,
     fetch_import_batch_page,
     fetch_import_batch_rows,
@@ -142,7 +144,111 @@ def _seed_manual_route(
     db_session.commit()
 
 
-def test_import_marks_same_day_other_system_rows_inactive(db_session):
+def test_import_official_template_example_does_not_deactivate_example_date(db_session):
+    """官方模板第二行是示例。按填写说明自第三行填写时，导入不得把 2026-04-21 当日其它运单快照失效。"""
+    d = date(2026, 4, 21)
+    _seed_sys_suggest(db_session, "REAL_WB", d)
+    content, _ = build_import_template_xlsx("system")
+    path = os.path.join(tempfile.gettempdir(), "official_sys_template.xlsx")
+    with open(path, "wb") as f:
+        f.write(content)
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["success_rows"] == 0
+    assert out["same_day_deactivated"] == 0
+    assert out["touched_route_dates"] == []
+    real = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "REAL_WB")
+        .one()
+    )
+    assert real.is_active == 1
+    assert (
+        db_session.query(SysSuggest).filter(SysSuggest.waybill_no == "示例运单001").count()
+        == 0
+    )
+
+
+def test_import_template_example_plus_real_row_does_not_touch_example_date(db_session):
+    d = date(2026, 4, 21)
+    _seed_sys_suggest(db_session, "REAL_WB", d)
+    content, _ = build_import_template_xlsx("system")
+    wb = load_workbook(BytesIO(content))
+    wb.active.append(
+        ["2026-05-01", "MAY001", "线路A", "仓库1", "门店甲", "4.2米标箱", 2.0, 70, 30, 60]
+    )
+    path = os.path.join(tempfile.gettempdir(), "template_plus_real.xlsx")
+    wb.save(path)
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["success_rows"] == 1
+    assert out["same_day_deactivated"] == 0
+    assert out["touched_route_dates"] == ["2026-05-01"]
+    real = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "REAL_WB")
+        .one()
+    )
+    assert real.is_active == 1
+    may = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.waybill_no == "MAY001")
+        .one()
+    )
+    assert may.is_active == 1
+    assert may.route_date == date(2026, 5, 1)
+
+
+def test_import_official_manual_template_example_does_not_deactivate_example_date(
+    db_session,
+):
+    d = date(2026, 4, 21)
+    _seed_manual_route(db_session, "REAL_M", d)
+    content, _ = build_import_template_xlsx("manual")
+    path = os.path.join(tempfile.gettempdir(), "official_man_template.xlsx")
+    with open(path, "wb") as f:
+        f.write(content)
+    out = import_excel(db_session, "manual", path, operator="t")
+    assert out["success_rows"] == 0
+    assert out["same_day_deactivated"] == 0
+    real = (
+        db_session.query(ManualRoute)
+        .filter(ManualRoute.route_date == d, ManualRoute.waybill_no == "REAL_M")
+        .one()
+    )
+    assert real.is_active == 1
+    assert (
+        db_session.query(ManualRoute).filter(ManualRoute.waybill_no == "示例运单001").count()
+        == 0
+    )
+
+
+def test_import_overwritten_template_row_still_imports(db_session):
+    """用户覆盖第二行示例为真实运单时仍应导入，并按快照失效当日其它运单。"""
+    d = date(2026, 4, 21)
+    _seed_sys_suggest(db_session, "OLD_WB", d)
+    content, _ = build_import_template_xlsx("system")
+    wb = load_workbook(BytesIO(content))
+    ws = wb.active
+    ws.cell(row=2, column=2, value="NEW_WB")
+    ws.cell(row=2, column=3, value="线路A")
+    ws.cell(row=2, column=4, value="仓库1")
+    ws.cell(row=2, column=5, value="门店甲")
+    path = os.path.join(tempfile.gettempdir(), "overwritten_template_row.xlsx")
+    wb.save(path)
+    out = import_excel(db_session, "system", path, operator="t")
+    assert out["success_rows"] == 1
+    assert out["same_day_deactivated"] == 1
+    old = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "OLD_WB")
+        .one()
+    )
+    assert old.is_active == 0
+    new = (
+        db_session.query(SysSuggest)
+        .filter(SysSuggest.route_date == d, SysSuggest.waybill_no == "NEW_WB")
+        .one()
+    )
+    assert new.is_active == 1
     d = date(2026, 4, 20)
     _seed_sys_suggest(db_session, "OLD_WB", d)
     path = os.path.join(tempfile.gettempdir(), "sys_replace_day.xlsx")

@@ -41,6 +41,24 @@ REQUIRED_COLUMNS = [
     "装载率",
 ]
 
+# 与 build_import_template_xlsx 第二行示例保持一致。填写说明要求自第三行起填业务数据；
+# 若把示例当真实行导入，同日快照会把 2026-04-21 其它有效运单 is_active=0。
+_TEMPLATE_EXAMPLE_WAYBILL = "示例运单001"
+_TEMPLATE_EXAMPLE_LINE = "示例线路"
+_TEMPLATE_EXAMPLE_WAREHOUSE = "示例仓库"
+_TEMPLATE_EXAMPLE_STORES = "示例门店甲,示例门店乙"
+
+
+def _is_canned_template_example_row(
+    waybill_no: str, route_line: str, warehouse_name: str, stores: str
+) -> bool:
+    return (
+        waybill_no == _TEMPLATE_EXAMPLE_WAYBILL
+        and route_line == _TEMPLATE_EXAMPLE_LINE
+        and warehouse_name == _TEMPLATE_EXAMPLE_WAREHOUSE
+        and stores == _TEMPLATE_EXAMPLE_STORES
+    )
+
 
 def _parse_date(value):
     if hasattr(value, "date"):
@@ -104,10 +122,10 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
         ws.append(
             [
                 date(2026, 4, 21),
-                "示例运单001",
-                "示例线路",
-                "示例仓库",
-                "示例门店甲,示例门店乙",
+                _TEMPLATE_EXAMPLE_WAYBILL,
+                _TEMPLATE_EXAMPLE_LINE,
+                _TEMPLATE_EXAMPLE_WAREHOUSE,
+                _TEMPLATE_EXAMPLE_STORES,
                 "4.2米标箱",
                 10.5,
                 75,
@@ -132,10 +150,10 @@ def build_import_template_xlsx(dataset_type: str) -> Tuple[bytes, str]:
         ws.append(
             [
                 date(2026, 4, 21),
-                "示例运单001",
-                "示例线路",
-                "示例仓库",
-                "示例门店甲,示例门店乙",
+                _TEMPLATE_EXAMPLE_WAYBILL,
+                _TEMPLATE_EXAMPLE_LINE,
+                _TEMPLATE_EXAMPLE_WAREHOUSE,
+                _TEMPLATE_EXAMPLE_STORES,
                 "4.2米高栏",
                 10.5,
                 75,
@@ -194,6 +212,11 @@ def import_excel(db: Session, dataset_type: str, file_path: str, operator: str =
                 raise ValueError("文本字段存在空值（含车辆类型）")
             if volume < 0:
                 raise ValueError("配送体积不能为负数")
+            if _is_canned_template_example_row(
+                waybill_no, route_line, warehouse_name, stores
+            ):
+                total_rows -= 1
+                continue
 
             touched_dates.add(route_date)
             if dataset_type == "system":
