@@ -70,6 +70,27 @@ def parse_lnglat(s: str) -> Optional[Tuple[float, float]]:
     return (lng, lat)
 
 
+def _customer_profile_for_code(db: Session, code: str) -> Optional[CustomerProfile]:
+    """Find a customer by code, including a row added earlier in this import.
+
+    ``autoflush`` is off, and rows without a parseable 收货坐标 return before
+    ``upsert_store_coordinate`` flushes. A second Excel row with the same
+    客户代码 would otherwise ``db.add`` another ``CustomerProfile`` and the
+    unique constraint would abort the whole workbook, including other customers.
+    """
+    row = (
+        db.query(CustomerProfile)
+        .filter(CustomerProfile.customer_code == code)
+        .first()
+    )
+    if row is not None:
+        return row
+    for obj in db.new:
+        if isinstance(obj, CustomerProfile) and obj.customer_code == code:
+            return obj
+    return None
+
+
 def import_customer_list_workbook(
     db: Session, path: str, *, import_source: str, sheet_name: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -133,11 +154,7 @@ def import_customer_list_workbook(
                 s = _cell_str(ws, r, c1)
                 return s if s else None
 
-            row = (
-                db.query(CustomerProfile)
-                .filter(CustomerProfile.customer_code == code)
-                .first()
-            )
+            row = _customer_profile_for_code(db, code)
             if not row:
                 row = CustomerProfile(customer_code=code)
                 db.add(row)

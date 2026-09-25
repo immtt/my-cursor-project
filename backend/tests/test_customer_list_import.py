@@ -105,3 +105,96 @@ def test_import_upsert_customer_and_store(db_session):
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def _workbook_with_rows(path: str, data_rows: list[tuple]) -> None:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "客户列表"
+    ws.append(["客户代码", "客户名称", "收货坐标"])
+    for code, name, coord in data_rows:
+        ws.append([code, name, coord])
+    wb.save(path)
+    wb.close()
+
+
+def test_import_duplicate_customer_code_without_coords_last_wins(db_session):
+    """Two rows for the same code, neither with a coordinate, must not abort the file.
+
+    The first row is still pending (no flush) when the second is seen. Inserting
+    a second CustomerProfile hits the unique constraint and rolls back every
+    other valid customer in the workbook.
+    """
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        _workbook_with_rows(
+            path,
+            [
+                ("C1", "旧名称", None),
+                ("C1", "新名称", None),
+                ("C2", "其他客户", "121.47,31.23"),
+            ],
+        )
+        r = import_customer_list_workbook(
+            db_session, path, import_source="单元测试", sheet_name="客户列表"
+        )
+        assert r["customer_profile_upserted"] == 3
+        rows = (
+            db_session.query(CustomerProfile)
+            .filter(CustomerProfile.customer_code.in_(["C1", "C2"]))
+            .order_by(CustomerProfile.customer_code)
+            .all()
+        )
+        assert [row.customer_code for row in rows] == ["C1", "C2"]
+        assert rows[0].customer_name == "新名称"
+        assert rows[1].customer_name == "其他客户"
+        sc = (
+            db_session.query(StoreCoordinate)
+            .filter(StoreCoordinate.store_name == "其他客户")
+            .one()
+        )
+        assert abs(sc.longitude - 121.47) < 0.01
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_import_duplicate_customer_code_later_row_keeps_coordinates(db_session):
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        _workbook_with_rows(
+            path,
+            [
+                ("C1", "旧名称", None),
+                ("C1", "新名称", "116.4,39.9"),
+            ],
+        )
+        r = import_customer_list_workbook(
+            db_session, path, import_source="单元测试", sheet_name="客户列表"
+        )
+        assert r["customer_profile_upserted"] == 2
+        assert r["store_coordinate_inserted"] == 1
+        row = (
+            db_session.query(CustomerProfile)
+            .filter(CustomerProfile.customer_code == "C1")
+            .one()
+        )
+        assert row.customer_name == "新名称"
+        assert row.delivery_coordinate == "116.4,39.9"
+        sc = (
+            db_session.query(StoreCoordinate)
+            .filter(StoreCoordinate.store_name == "新名称")
+            .one()
+        )
+        assert abs(sc.longitude - 116.4) < 0.01
+        assert (
+            db_session.query(StoreCoordinate)
+            .filter(StoreCoordinate.store_name == "旧名称")
+            .first()
+            is None
+        )
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
