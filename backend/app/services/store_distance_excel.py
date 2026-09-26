@@ -78,21 +78,37 @@ def upsert_store_coord(
 
 
 def upsert_store_pair_distance(db: Session, store_from: str, store_to: str, distance_km: float) -> None:
+    """Insert or update one directed edge. Later rows in the same sheet win.
+
+    ``autoflush`` is off and this helper does not flush. A second Excel row with
+    the same (store_from, store_to) would otherwise ``db.add`` another pending
+    ``StorePairDistance``. The unique constraint then fails at sheet commit and
+    rolls back every other distance and coordinate in that sheet.
+    """
     row = (
         db.query(StorePairDistance)
         .filter(StorePairDistance.store_from == store_from, StorePairDistance.store_to == store_to)
         .first()
     )
+    if row is None:
+        for obj in db.new:
+            if (
+                isinstance(obj, StorePairDistance)
+                and obj.store_from == store_from
+                and obj.store_to == store_to
+            ):
+                row = obj
+                break
     if row:
         row.distance_km = distance_km
-    else:
-        db.add(
-            StorePairDistance(
-                store_from=store_from,
-                store_to=store_to,
-                distance_km=distance_km,
-            )
+        return
+    db.add(
+        StorePairDistance(
+            store_from=store_from,
+            store_to=store_to,
+            distance_km=distance_km,
         )
+    )
 
 
 def import_workbook_path(db: Session, path: str, data_source_label: str) -> Dict[str, Any]:
