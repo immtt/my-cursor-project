@@ -103,21 +103,31 @@ def upsert_store_coord(
 
 
 def upsert_store_pair_distance(db: Session, store_from: str, store_to: str, distance_km: float) -> None:
+    """Same pending-row reuse as ``app.services.store_distance_excel.upsert_store_pair_distance``."""
     row = (
         db.query(StorePairDistance)
         .filter(StorePairDistance.store_from == store_from, StorePairDistance.store_to == store_to)
         .first()
     )
+    if row is None:
+        for obj in db.new:
+            if (
+                isinstance(obj, StorePairDistance)
+                and obj.store_from == store_from
+                and obj.store_to == store_to
+            ):
+                row = obj
+                break
     if row:
         row.distance_km = distance_km
-    else:
-        db.add(
-            StorePairDistance(
-                store_from=store_from,
-                store_to=store_to,
-                distance_km=distance_km,
-            )
+        return
+    db.add(
+        StorePairDistance(
+            store_from=store_from,
+            store_to=store_to,
+            distance_km=distance_km,
         )
+    )
 
 
 def import_workbook(path: Path, data_source_label: str) -> dict:
