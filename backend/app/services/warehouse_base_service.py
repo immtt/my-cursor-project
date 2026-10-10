@@ -268,6 +268,10 @@ def _validate_warehouse_base_core(row: WarehouseBase) -> None:
 
 
 def _sync_warehouse_brand_summary(db: Session, row: WarehouseBase) -> None:
+    # autoflush is off. Brand rows added in this transaction are invisible to the
+    # summary query until flushed, so a UI save that only sends business_brands
+    # leaves row.brand empty and create validation rejects the warehouse.
+    db.flush()
     ch = (
         db.query(WarehouseBusinessBrand)
         .filter(WarehouseBusinessBrand.warehouse_id == row.id)
@@ -298,7 +302,7 @@ def _replace_business_brands_from_payload(
             raise ValueError("business_brands 须为数组")
         db.query(WarehouseBusinessBrand).filter(
             WarehouseBusinessBrand.warehouse_id == row.id
-        ).delete(synchronize_session=False)
+        ).delete(synchronize_session="fetch")
         for i, it in enumerate(items):
             if not isinstance(it, dict):
                 continue
@@ -567,7 +571,7 @@ def update_warehouse_base(db: Session, row_id: int, data: Dict[str, Any]) -> Opt
     elif "brand" in data:
         db.query(WarehouseBusinessBrand).filter(
             WarehouseBusinessBrand.warehouse_id == row.id
-        ).delete(synchronize_session=False)
+        ).delete(synchronize_session="fetch")
         summary = (row.brand or "").strip()
         if summary:
             for i, part in enumerate([s.strip() for s in summary.split(";") if s.strip()]):
