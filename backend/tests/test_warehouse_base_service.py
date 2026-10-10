@@ -70,6 +70,34 @@ def test_warehouse_base_crud_and_list(db_session):
     assert db_session.query(WarehouseBase).filter(WarehouseBase.id == r.id).first() is None
 
 
+def test_warehouse_save_with_business_brands_only(db_session):
+    """The warehouse form has no brand field; it only posts business_brands."""
+    created = create_warehouse_base(
+        db_session,
+        {
+            "warehouse_name": "表单仓",
+            "group_name": "某集团",
+            "address": "上海市某路1号",
+            "business_brands": [{"name": "万好", "logo_as": "好想来"}],
+        },
+    )
+    assert created.brand == "万好（LOGO：好想来）"
+    assert [b.name for b in created.business_brands] == ["万好"]
+
+    updated = update_warehouse_base(
+        db_session,
+        created.id,
+        {
+            "address": "新地址99号",
+            "business_brands": [{"name": "新品牌", "logo_as": None}],
+        },
+    )
+    assert updated is not None
+    assert updated.address == "新地址99号"
+    assert updated.brand == "新品牌"
+    assert [b.name for b in updated.business_brands] == ["新品牌"]
+
+
 def test_warehouse_base_create_without_code(db_session):
     r = create_warehouse_base(
         db_session,
