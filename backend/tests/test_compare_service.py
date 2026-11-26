@@ -256,3 +256,136 @@ def test_overview_and_results_filter_by_warehouse(db_session):
 
     rows_wrong = fetch_results(db_session, rd, rd, None, "不存在仓")
     assert rows_wrong == []
+
+
+def test_run_compare_partial_overlap_does_not_starve_full_match(db_session):
+    """PRD 3.1.2：多对一时取最高匹配度。先入库的弱重叠不能占走完全匹配的手工运单。"""
+    rd = date(2026, 4, 23)
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_PARTIAL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            vehicle_type="4.2米",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=rd,
+            waybill_no="MAN_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            vehicle_type="4.2米",
+            volume=10.0,
+            load_rate=68,
+            est_distance=42,
+            est_duration=85,
+            calc_status=1,
+        )
+    )
+    db_session.commit()
+
+    run_compare(db_session, rd, 0.5)
+
+    from app.models.entities import CompareResult
+
+    rows = db_session.query(CompareResult).all()
+    by_sys = {}
+    for row in rows:
+        if row.sys_id is None:
+            continue
+        sys_row = db_session.query(SysSuggest).filter(SysSuggest.id == row.sys_id).one()
+        man_no = None
+        if row.manual_id is not None:
+            man_no = db_session.query(ManualRoute).filter(ManualRoute.id == row.manual_id).one().waybill_no
+        by_sys[sys_row.waybill_no] = (row.match_status, man_no, row.store_match_rate)
+
+    assert by_sys["SYS_FULL"] == ("full", "MAN_FULL", 100.0)
+    assert by_sys["SYS_PARTIAL"] == ("none", None, 0.0)
+    linked = [row for row in rows if row.manual_id is not None and row.sys_id is not None]
+    assert len(linked) == 1
+
+
+def test_run_compare_zero_overlap_does_not_claim_manual(db_session):
+    """0% 重合不是配对，不能占住稍后才会完全匹配的手工运单。"""
+    rd = date(2026, 4, 24)
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_NONE",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店独有",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        SysSuggest(
+            route_date=rd,
+            waybill_no="SYS_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            volume=9.0,
+            load_rate=70,
+            est_distance=40,
+            est_duration=80,
+        )
+    )
+    db_session.add(
+        ManualRoute(
+            route_date=rd,
+            waybill_no="MAN_FULL",
+            route_line="线路A",
+            warehouse_name="仓库1",
+            stores="门店甲,门店乙",
+            volume=10.0,
+            load_rate=68,
+            est_distance=42,
+            est_duration=85,
+            calc_status=1,
+        )
+    )
+    db_session.commit()
+
+    run_compare(db_session, rd, 0.5)
+
+    from app.models.entities import CompareResult
+
+    rows = db_session.query(CompareResult).all()
+    by_sys = {}
+    for row in rows:
+        if row.sys_id is None:
+            continue
+        sys_row = db_session.query(SysSuggest).filter(SysSuggest.id == row.sys_id).one()
+        man_no = None
+        if row.manual_id is not None:
+            man_no = db_session.query(ManualRoute).filter(ManualRoute.id == row.manual_id).one().waybill_no
+        by_sys[sys_row.waybill_no] = (row.match_status, man_no)
+
+    assert by_sys["SYS_FULL"] == ("full", "MAN_FULL")
+    assert by_sys["SYS_NONE"] == ("none", None)
