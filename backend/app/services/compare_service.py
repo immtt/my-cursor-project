@@ -16,44 +16,51 @@ def _match_status(rate: float) -> str:
     return "none"
 
 
+def _pair_sort_key(sys_row: SysSuggest, man_row: ManualRoute, rate: float):
+    """PRD 3.1.2：匹配度最高优先；并列时体积差更小优先，再保留原车型一致与运单号次序。"""
+    sys_vt = (sys_row.vehicle_type or "").strip()
+    man_vt = (man_row.vehicle_type or "").strip()
+    vehicle_rank = 0 if sys_vt == man_vt else 1
+    return (
+        -rate,
+        abs(sys_row.volume - man_row.volume),
+        vehicle_rank,
+        man_row.waybill_no or "",
+        sys_row.waybill_no or "",
+        sys_row.id or 0,
+        man_row.id or 0,
+    )
+
+
 def run_compare(db: Session, route_date, threshold: float = 0.5):
     """threshold 仅保留 API 兼容；匹配度与状态分档遵循 PRD，不再使用该阈值。"""
     _ = threshold
     db.query(CompareResult).filter(CompareResult.route_date == route_date).delete()
     sys_rows = db.query(SysSuggest).filter(SysSuggest.route_date == route_date, SysSuggest.is_active == 1).all()
     manual_rows = db.query(ManualRoute).filter(ManualRoute.route_date == route_date, ManualRoute.is_active == 1).all()
-    available_manual_ids = {row.id for row in manual_rows}
-    inserted = 0
 
+    # 同日多对一不能按系统行扫描顺序占坑：先收集 rate>0 的候选，再按最高匹配度唯一占用。
+    candidates: List[Tuple[SysSuggest, ManualRoute, float]] = []
     for sys_row in sys_rows:
-        best = None
-        best_rate = -1.0
-        best_abs_volume_diff = float("inf")
         for man_row in manual_rows:
-            if man_row.id not in available_manual_ids:
-                continue
             rate = calc_store_match_rate(sys_row.stores, man_row.stores)
-            abs_volume_diff = abs(sys_row.volume - man_row.volume)
-            if rate > best_rate:
-                best = man_row
-                best_rate = rate
-                best_abs_volume_diff = abs_volume_diff
-            elif rate == best_rate:
-                if abs_volume_diff < best_abs_volume_diff:
-                    best = man_row
-                    best_abs_volume_diff = abs_volume_diff
-                elif abs_volume_diff == best_abs_volume_diff and best:
-                    sys_vt = (sys_row.vehicle_type or "").strip()
-                    b_vt = (best.vehicle_type or "").strip()
-                    m_vt = (man_row.vehicle_type or "").strip()
-                    if sys_vt == m_vt and sys_vt != b_vt:
-                        best = man_row
-                    elif sys_vt != m_vt and sys_vt == b_vt:
-                        pass
-                    elif man_row.waybill_no < best.waybill_no:
-                        best = man_row
+            if rate <= 0:
+                continue
+            candidates.append((sys_row, man_row, rate))
+    candidates.sort(key=lambda item: _pair_sort_key(item[0], item[1], item[2]))
 
-        if best is None:
+    assigned_manual_by_sys: Dict[int, Tuple[ManualRoute, float]] = {}
+    used_manual_ids = set()
+    for sys_row, man_row, rate in candidates:
+        if sys_row.id in assigned_manual_by_sys or man_row.id in used_manual_ids:
+            continue
+        assigned_manual_by_sys[sys_row.id] = (man_row, rate)
+        used_manual_ids.add(man_row.id)
+
+    inserted = 0
+    for sys_row in sys_rows:
+        pair = assigned_manual_by_sys.get(sys_row.id)
+        if pair is None:
             db.add(
                 CompareResult(
                     route_date=route_date,
@@ -67,6 +74,7 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
             inserted += 1
             continue
 
+        best, best_rate = pair
         status = _match_status(best_rate)
         volume_diff = None
         if best.volume != 0:
@@ -92,12 +100,10 @@ def run_compare(db: Session, route_date, threshold: float = 0.5):
                 est_duration_diff=duration_diff,
             )
         )
-        available_manual_ids.remove(best.id)
         inserted += 1
 
-    for mid in list(available_manual_ids):
-        man_row = next((m for m in manual_rows if m.id == mid), None)
-        if not man_row:
+    for man_row in manual_rows:
+        if man_row.id in used_manual_ids:
             continue
         db.add(
             CompareResult(
